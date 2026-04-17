@@ -1,0 +1,99 @@
+{
+  "rules": {
+    // ========================================
+    // ADMIN FULL ACCESS - zainashraf0326@gmail.com
+    // USERS - OWN DATA ONLY
+    // ALL PATHS REQUIRE LOGIN
+    // ========================================
+
+    // USERS COLLECTION
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
+        ".write": "auth.email == 'zainashraf0326@gmail.com'",
+
+        // Notifications subcollection
+        "notifications": {
+          "$notifId": {
+            ".read": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
+            ".write": "auth != null && auth.uid == $uid",
+            "read": { ".write": "auth != null && auth.uid == $uid" },
+            "deleted": { ".write": "auth != null && auth.uid == $uid" }
+          }
+        }
+      }
+    },
+
+    // ORDERS COLLECTION - User can create/update own, admin full control
+    "orders": {
+      ".read": "auth.email == 'zainashraf0326@gmail.com'",
+      ".write": "auth.email == 'zainashraf0326@gmail.com'",
+      
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
+        ".write": "auth != null && auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com'",
+        
+        "$orderId": {
+          ".read": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
+          ".write": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')"
+        }
+      }
+    },
+
+    // REFERRALS COLLECTION - User can create own referral, admin full control
+    "referrals": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      
+      "$refId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (newData.child('referrerId').val() == auth.uid || auth.email == 'zainashraf0326@gmail.com')"
+      }
+    },
+
+    // PLANS - Read only for authenticated users, admin can write
+    "plans": {
+      ".read": "auth != null",
+      ".write": "auth.email == 'zainashraf0326@gmail.com'"
+    },
+
+    // NOTIFICATIONS - User can create/read/delete own, admin full access
+    "notifications": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      
+      "$notifId": {
+        ".read": "auth != null",
+        ".write": "auth.email == 'zainashraf0326@gmail.com'"
+      }
+    },
+
+    // CONFIG & SETTINGS - Admin only
+    "config": {
+      ".read": "auth != null",
+      ".write": "auth.email == 'zainashraf0326@gmail.com'"
+    },
+
+    "admin_settings": {
+      ".read": "auth != null",
+      ".write": "auth.email == 'zainashraf0326@gmail.com'"
+    },
+
+    "webConfig": {
+      ".read": "auth != null",
+      ".write": "auth.email == 'zainashraf0326@gmail.com'"
+    },
+
+    // WALLETS - User own only, admin full access
+    "wallets": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
+        ".write": "auth.email == 'zainashraf0326@gmail.com'"
+      }
+    },
+
+    // DEFAULT - DENY ALL OTHER PATHS
+    ".read": false,
+    ".write": false
+  }
+}

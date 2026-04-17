@@ -54,7 +54,7 @@ export default function AdminDebugPage() {
   /**
    * Test 1: Social Media Submission Test
    */
-  const testSocialMediaSubmission = async () => {
+  const testSocialMediaSubmission = async (): Promise<TestResult> => {
     try {
       const submissionData = {
         userId: 'test-admin-' + Date.now(),
@@ -108,7 +108,7 @@ export default function AdminDebugPage() {
   /**
    * Test 2: Admin User Data Fetch
    */
-  const fetchAdminData = async () => {
+  const fetchAdminData = async (): Promise<TestResult> => {
     try {
       setLoadingAdminData(true);
       if (!user) {
@@ -181,7 +181,7 @@ export default function AdminDebugPage() {
   /**
    * Test 3: System Statistics
    */
-  const fetchSystemStats = async () => {
+  const fetchSystemStats = async (): Promise<TestResult> => {
     try {
       // Total users
       const usersSnap = await getDocs(collection(db, 'users'));

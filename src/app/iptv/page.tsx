@@ -10,12 +10,10 @@ import { Check } from 'lucide-react';
 import { getConfig, ConfigData } from '@/lib/firebase-service';
 
 type Device = 'smart-tv' | 'firestick' | 'android-box' | 'mobile' | 'laptop' | 'tablet' | 'mag-box' | 'pc';
-type PaymentMethod = 'remitly' | 'binance' | 'paypal' | 'cashapp';
 
 interface WizardState {
   device: Device | null;
   plan: string | null;
-  paymentMethod: PaymentMethod | null;
 }
 
 const devices: { id: Device; label: string; emoji: string }[] = [
@@ -29,19 +27,11 @@ const devices: { id: Device; label: string; emoji: string }[] = [
   { id: 'pc', label: 'PC', emoji: '🖲️' },
 ];
 
-const paymentMethods = [
-  { id: 'remitly', name: 'Remitly', icon: '🔵' },
-  { id: 'binance', name: 'Binance', icon: '🟡' },
-  { id: 'paypal', name: 'PayPal', icon: '💙' },
-  { id: 'cashapp', name: 'Cash App', icon: '💚' },
-];
-
 export default function IPTVPage() {
   const [step, setStep] = useState(1);
   const [state, setState] = useState<WizardState>({
     device: null,
     plan: null,
-    paymentMethod: null,
   });
   const [config, setConfig] = useState<ConfigData | null>(null);
   const router = useRouter();
@@ -79,34 +69,29 @@ export default function IPTVPage() {
       duration: '6 Months', 
       originalPrice: config.plans.plan6Month.price, 
       salePrice: config.plans.plan6Month.salePrice,
-      extraDiscount: config.plans.plan6Month.extraDiscount || 0
+      extraDiscount: 0
     },
     '12month': { 
       duration: '12 Months', 
       originalPrice: config.plans.plan12Month.price, 
       salePrice: config.plans.plan12Month.salePrice,
-      extraDiscount: config.plans.plan12Month.extraDiscount || 0
+      extraDiscount: 0
     },
   } : {};
   
   const currentPlan = state.plan && plans[state.plan as keyof typeof plans] ? plans[state.plan as keyof typeof plans] : null;
-  const isSpecialPayment = state.paymentMethod === 'remitly' || state.paymentMethod === 'binance';
-
-  // When payment method is selected, navigate to payment page
+  // When plan is selected, navigate to payment page.
   useEffect(() => {
-    if (state.device && state.plan && state.paymentMethod && currentPlan) {
-      setTimeout(() => {
-        const queryParams = new URLSearchParams({
-          plan: state.plan || '',
-          device: state.device || '',
-          paymentMethod: state.paymentMethod || '',
-          originalPrice: currentPlan?.originalPrice?.toString() || '0',
-          salePrice: currentPlan?.salePrice?.toString() || '0',
-        });
-        router.push(`/payment?${queryParams.toString()}`);
-      }, 300);
+    if (state.device && state.plan && currentPlan) {
+      const queryParams = new URLSearchParams({
+        plan: state.plan || '',
+        device: state.device || '',
+        originalPrice: currentPlan?.originalPrice?.toString() || '0',
+        salePrice: currentPlan?.salePrice?.toString() || '0',
+      });
+      router.push(`/payment?${queryParams.toString()}`);
     }
-  }, [state.device, state.plan, state.paymentMethod, currentPlan, router]);
+  }, [state.device, state.plan, currentPlan, router]);
 
   return (
     <AppLayout title="IPTV Services">
@@ -115,7 +100,7 @@ export default function IPTVPage() {
         {/* Progress Indicator */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
-            {[1, 2, 3].map((s) => (
+            {[1, 2].map((s) => (
               <div key={s} className="flex items-center flex-1">
                 <div
                   className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all duration-200 ${
@@ -126,7 +111,7 @@ export default function IPTVPage() {
                 >
                   {s < step ? <Check className="w-5 h-5" /> : s}
                 </div>
-                {s < 3 && (
+                {s < 2 && (
                   <div
                     className={`flex-1 h-1 mx-2 rounded-full transition-all duration-200 ${
                       s < step
@@ -141,7 +126,7 @@ export default function IPTVPage() {
           <p className="text-sm text-slate-600 dark:text-slate-400 text-center">
             {step === 1 && 'Step 1: Select Device'}
             {step === 2 && 'Step 2: Select Plan'}
-            {step === 3 && 'Step 3: Select Payment Method'}
+            {step === 2 && 'Step 2: Select Plan'}
           </p>
         </div>
 
@@ -201,7 +186,7 @@ export default function IPTVPage() {
                   key={id}
                   onClick={() => {
                     handlePlanSelect(id);
-                    setTimeout(() => setStep(3), 200);
+                    setTimeout(() => setStep(2), 200);
                   }}
                   className={`glass rounded-2xl p-4 text-center transition-all duration-200 relative flex flex-col items-center justify-center ${
                     state.plan === id
@@ -242,95 +227,6 @@ export default function IPTVPage() {
           </div>
         )}
 
-        {/* Step 3: Select Payment Method */}
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setStep(2)}
-                className="rounded-full"
-              >
-                ← Back
-              </Button>
-              <p className="text-slate-600 dark:text-slate-400">
-                {currentPlan?.duration} - ${currentPlan?.salePrice}
-              </p>
-            </div>
-
-            <p className="text-slate-600 dark:text-slate-400 mb-4">
-              Select your payment method and see your savings!
-            </p>
-
-            {/* Payment Methods Grid */}
-            <div className="grid grid-cols-2 gap-3 mb-6">
-              {paymentMethods.map((pm) => (
-                <button
-                  key={pm.id}
-                  onClick={() => setState({ ...state, paymentMethod: pm.id as PaymentMethod })}
-                  className={`glass rounded-2xl p-5 transition-all duration-200 relative overflow-visible animate-shine flex flex-col items-center justify-center ${
-                    state.paymentMethod === pm.id
-                      ? 'ring-2 ring-emerald-500 bg-emerald-50/20 dark:bg-emerald-900/20 scale-105'
-                      : 'bg-slate-100 dark:bg-slate-800 hover:scale-105'
-                  }`}
-                >
-                  {(pm.id === 'remitly' || pm.id === 'binance') && (
-                    <div className="absolute top-3 right-3 bg-gradient-to-r from-red-500 to-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-lg shadow-lg z-10 whitespace-nowrap">
-                      🎁 +30% OFF
-                    </div>
-                  )}
-                  <p className="text-3xl mb-2">{pm.icon}</p>
-                  <p className="font-semibold text-slate-900 dark:text-white text-sm">{pm.name}</p>
-                </button>
-              ))}
-            </div>
-
-            {/* Discount Breakdown */}
-            {state.paymentMethod && currentPlan && (
-              <Card className="glass border-emerald-200 dark:border-emerald-700/30">
-                <CardContent className="pt-4">
-                  <h4 className="font-bold text-slate-900 dark:text-white mb-4">💰 Your Savings:</h4>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-600 dark:text-slate-400">Original Price:</span>
-                      <span className="font-bold text-slate-900 dark:text-white line-through text-slate-400">
-                        ${currentPlan.originalPrice}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-600 dark:text-slate-400">Sale Price:</span>
-                      <span className="font-bold text-slate-900 dark:text-white">${currentPlan.salePrice}</span>
-                    </div>
-                    {isSpecialPayment && (
-                      <div className="flex justify-between items-center bg-red-50 dark:bg-red-900/20 p-2 rounded-lg">
-                        <span className="text-red-700 dark:text-red-300 font-semibold">Extra Discount (30%):</span>
-                        <span className="font-bold text-red-600 dark:text-red-400">-${currentPlan.extraDiscount}</span>
-                      </div>
-                    )}
-                    <div className="h-px bg-slate-300 dark:bg-slate-600"></div>
-                    <div className="flex justify-between items-center pt-2 bg-gradient-to-r from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 p-3 rounded-lg">
-                      <span className="text-emerald-700 dark:text-emerald-300 font-bold">Final Price:</span>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-bold text-lg">
-                        ${isSpecialPayment ? (currentPlan.salePrice - currentPlan.extraDiscount).toFixed(2) : currentPlan.salePrice}
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Continue Button */}
-            <Button
-              onClick={() => {}}
-              disabled={!state.paymentMethod}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-3 text-lg mt-6"
-              size="lg"
-            >
-              → Continue to Payment
-            </Button>
-          </div>
-        )}
       </div>
     </div>
     </AppLayout>

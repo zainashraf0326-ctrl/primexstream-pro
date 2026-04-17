@@ -134,7 +134,7 @@ export function NotificationButton({ userId }: NotificationButtonProps) {
                           <p className="font-bold text-sm text-slate-900 dark:text-white truncate">
                             {notif.title}
                           </p>
-                          {!notif.isRead && (
+                          {!notif.read && (
                             <span className="inline-block w-2 h-2 bg-red-500 rounded-full flex-shrink-0" />
                           )}
                         </div>
@@ -142,15 +142,20 @@ export function NotificationButton({ userId }: NotificationButtonProps) {
                           {notif.message}
                         </p>
                         <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
-                          {new Date(notif.createdAt.toDate ? notif.createdAt.toDate() : notif.createdAt).toLocaleDateString()}{' '}
-                          {new Date(notif.createdAt.toDate ? notif.createdAt.toDate() : notif.createdAt).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {(() => {
+                            const dateValue = notif.createdAt.toDate ? notif.createdAt.toDate() : (notif.createdAt instanceof Date ? notif.createdAt : new Date());
+                            return dateValue.toLocaleDateString();
+                          })()} {(() => {
+                            const dateValue = notif.createdAt.toDate ? notif.createdAt.toDate() : (notif.createdAt instanceof Date ? notif.createdAt : new Date());
+                            return dateValue.toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            });
+                          })()}
                         </p>
                       </div>
                       <div className="flex gap-1 flex-shrink-0">
-                        {!notif.isRead && (
+                        {!notif.read && (
                           <button
                             onClick={() => handleMarkAsRead(notif.id)}
                             className="p-1.5 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 rounded transition-colors"
@@ -166,16 +171,6 @@ export function NotificationButton({ userId }: NotificationButtonProps) {
                         >
                           <Trash2 className="w-4 h-4 text-red-600 dark:text-red-500" />
                         </button>
-                        {notif.data?.link && (
-                          <a
-                            href={notif.data.link}
-                            className="p-1.5 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 rounded transition-colors"
-                            title="Go to related page"
-                            onClick={() => setIsOpen(false)}
-                          >
-                            <ArrowRight className="w-4 h-4 text-blue-600 dark:text-blue-500" />
-                          </a>
-                        )}
                       </div>
                     </div>
                   </div>

@@ -14,10 +14,11 @@ service cloud.firestore {
     }
     
     function isAdmin() {
-      return isAuthenticated() && 
-             request.auth.email == "zainashraf0326@gmail.com";
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
     }
 
+    // ===== USERS COLLECTION =====
     match /users/{userId} {
       allow read: if isAdmin() || (isAuthenticated() && isOwner(userId));
       allow create: if isAuthenticated() && request.auth.uid == userId;
@@ -35,12 +36,7 @@ service cloud.firestore {
       }
     }
 
-    match /notifications/{notificationId} {
-      allow read: if (isAuthenticated() && request.auth.uid == resource.data.userId) || isAdmin();
-      allow create: if isAuthenticated();
-      allow update, delete: if (isAuthenticated() && request.auth.uid == resource.data.userId) || isAdmin();
-    }
-
+    // ===== REFERRALS COLLECTION =====
     match /referrals/{referralId} {
       allow read: if isAdmin() || (isAuthenticated() && 
                      (isOwner(resource.data.referrerId) || 
@@ -52,6 +48,7 @@ service cloud.firestore {
                      ));
     }
 
+    // ===== WALLETS COLLECTION =====
     match /wallets/{userId} {
       allow read: if isAdmin() || isOwner(userId);
       allow create: if isAuthenticated();
@@ -62,11 +59,13 @@ service cloud.firestore {
       }
     }
 
+    // ===== REWARDS COLLECTION =====
     match /rewards/{rewardId} {
       allow read: if isAuthenticated();
       allow create, update: if isAuthenticated();
     }
 
+    // ===== ORDERS COLLECTION =====
     match /orders/{orderId} {
       allow read: if isAdmin() || 
                      (isAuthenticated() && request.auth.uid == resource.data.userId);
@@ -76,21 +75,25 @@ service cloud.firestore {
                        (isAuthenticated() && request.auth.uid == resource.data.userId);
     }
 
+    // ===== PLANS COLLECTION (Public Read) =====
     match /plans/{planId} {
       allow read: if resource.data.isActive == true;
       allow create, update, delete: if isAdmin();
     }
 
+    // ===== SETTINGS COLLECTION =====
     match /settings/{document=**} {
       allow read: if document == "general";
       allow write: if isAdmin();
     }
 
+    // ===== ADMIN CONTENT COLLECTION =====
     match /adminContent/{document=**} {
       allow read: if isAdmin();
       allow write: if isAdmin();
     }
 
+    // ===== SOCIAL TASK SUBMISSIONS =====
     match /socialTaskSubmissions/{submissionId} {
       allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.userId);
       allow create: if isAuthenticated();
@@ -98,6 +101,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ===== WEBSITE CONFIG =====
+    match /webConfig/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ===== DENY ALL OTHER PATHS =====
     match /{document=**} {
       allow read, write: if false;
     }

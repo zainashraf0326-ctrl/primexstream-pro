@@ -21,11 +21,7 @@ import {
 import { Button } from '@/components/ui/button';
 import {
   collection,
-  query,
-  where,
   getDocs,
-  doc,
-  getDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase-config';
 
@@ -65,37 +61,47 @@ export default function AdminStatsPage() {
   const fetchStats = async () => {
     setLoading(true);
     try {
-      // Total users - ADMIN CAN READ ALL
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const totalUsers = usersSnap.size;
+      const safeGetCollection = async (collectionName: string) => {
+        try {
+          return await getDocs(collection(db, collectionName));
+        } catch (error: any) {
+          if (error?.code === 'permission-denied') {
+            console.warn(`Permission denied for ${collectionName}`);
+            return null;
+          }
+          throw error;
+        }
+      };
 
-      // Total orders & revenue - ADMIN CAN READ ALL
-      const ordersSnap = await getDocs(collection(db, 'orders'));
-      const totalOrders = ordersSnap.size;
-      const totalRevenue = ordersSnap.docs.reduce(
-        (sum, doc) => sum + (doc.data().amount || 0),
-        0
-      );
+      const [usersSnap, ordersSnap, referralsSnap, submissionsSnap, notificationsSnap] = await Promise.all([
+        safeGetCollection('users'),
+        safeGetCollection('orders'),
+        safeGetCollection('referrals'),
+        safeGetCollection('socialTaskSubmissions'),
+        safeGetCollection('notifications'),
+      ]);
 
-      // Total referrals - ADMIN CAN READ ALL
-      const referralsSnap = await getDocs(collection(db, 'referrals'));
-      const totalReferrals = referralsSnap.size;
-      const purchasedReferrals = referralsSnap.docs.filter(
-        (doc) => doc.data().purchasedPlan === true
-      ).length;
+      const totalUsers = usersSnap?.size || 0;
+      const totalOrders = ordersSnap?.size || 0;
+      const totalRevenue =
+        ordersSnap?.docs.reduce((sum, snapshotDoc) => {
+          const data = snapshotDoc.data() as any;
+          const normalizedStatus = (data.status || '').toString().toLowerCase();
+          if (normalizedStatus !== 'approved') return sum;
+          return sum + Number(data.amount || data.finalPrice || 0);
+        }, 0) || 0;
 
-      // Social submissions - ADMIN CAN READ ALL
-      const submissionsSnap = await getDocs(
-        collection(db, 'socialTaskSubmissions')
-      );
-      const socialSubmissions = submissionsSnap.size;
-      const approvedSubmissions = submissionsSnap.docs.filter(
-        (doc) => doc.data().approvalStatus === 'approved'
-      ).length;
+      const totalReferrals = referralsSnap?.size || 0;
+      const purchasedReferrals =
+        referralsSnap?.docs.filter((snapshotDoc) => snapshotDoc.data().purchasedPlan === true).length || 0;
 
-      // Notifications - ADMIN CAN READ ALL
-      const notificationsSnap = await getDocs(collection(db, 'notifications'));
-      const adminNotifications = notificationsSnap.size;
+      const socialSubmissions = submissionsSnap?.size || 0;
+      const approvedSubmissions =
+        submissionsSnap?.docs.filter(
+          (snapshotDoc) => (snapshotDoc.data().approvalStatus || '').toLowerCase() === 'approved'
+        ).length || 0;
+
+      const adminNotifications = notificationsSnap?.size || 0;
 
       // All orders for admin (no filter)
       const adminOrders = totalOrders;
@@ -117,8 +123,7 @@ export default function AdminStatsPage() {
       });
     } catch (error) {
       console.error('Error fetching stats:', error);
-      console.error('Error details:', error);
-      alert('Failed to load statistics. Check Firestore permissions.');
+      alert('Failed to load statistics.');
     } finally {
       setLoading(false);
     }
@@ -351,7 +356,7 @@ export default function AdminStatsPage() {
                   {stats?.adminReferrals || 0}
                 </p>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  People you've referred to the system
+                  People you&apos;ve referred to the system
                 </p>
               </div>
             </Card>
@@ -427,7 +432,7 @@ export default function AdminStatsPage() {
             <li>• Track your personal orders, notifications, and referrals</li>
             <li>• Monitor social task submissions and approval rates</li>
             <li>
-              • Click "Refresh" button to reload the latest data from Firebase
+              • Click &quot;Refresh&quot; button to reload the latest data from Firebase
             </li>
             <li>
               • Use the Debug panel (/admin/debug) to test system functionality

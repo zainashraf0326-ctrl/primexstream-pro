@@ -15,6 +15,8 @@ import { processOrderReward } from '@/lib/order-reward-hook';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Edit3, CheckCircle, AlertCircle, X, Calendar, DollarSign, User, Zap, Search, Settings } from 'lucide-react';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase-config';
 
 type FilterStatus = 'pending' | 'approved' | 'rejected';
 
@@ -36,6 +38,7 @@ export default function AdminOrdersPage() {
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [userLookup, setUserLookup] = useState<Record<string, { name?: string; email?: string }>>({});
 
   useEffect(() => {
     if (isLoading) return;
@@ -49,6 +52,27 @@ export default function AdminOrdersPage() {
     // ADMIN CAN NOW READ ALL ORDERS - no filter needed
     unsubscribe = listenToOrders(setOrders);
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const loadUsers = async () => {
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const mapped: Record<string, { name?: string; email?: string }> = {};
+        usersSnap.docs.forEach((snapshotDoc) => {
+          const data = snapshotDoc.data() as any;
+          mapped[snapshotDoc.id] = {
+            name: data.name || data.fullName || data.displayName || '',
+            email: data.email || '',
+          };
+        });
+        setUserLookup(mapped);
+      } catch (error) {
+        console.warn('Could not load users collection for order display:', error);
+      }
+    };
+
+    loadUsers();
   }, []);
 
   const handleSaveEdit = async () => {
@@ -76,7 +100,7 @@ export default function AdminOrdersPage() {
       await updateOrderStatus(editingOrder.id, editForm.status, updateData);
       
       // Process referral reward if order is approved
-      if (editForm.status === 'approved') {
+      if (editForm.status === 'approved' && editingOrder.userId) {
         try {
           await processOrderReward(editingOrder.userId, editingOrder.id);
           console.log('✅ Referral reward processed for order:', editingOrder.id);
@@ -109,8 +133,13 @@ export default function AdminOrdersPage() {
       const orderDate = order.createdAt?.toDate?.() || new Date(order.createdAt?.seconds * 1000 || 0);
       const formattedDate = orderDate.toLocaleDateString('en-US');
       
+      const userProfile = order.userId ? userLookup[order.userId] : undefined;
+      const displayName = userProfile?.name || order.userEmail || 'Unknown User';
+      const displayEmail = userProfile?.email || order.userEmail || '';
+
       return (
-        order.userEmail?.toLowerCase().includes(query) ||
+        displayName.toLowerCase().includes(query) ||
+        displayEmail.toLowerCase().includes(query) ||
         order.userId?.toLowerCase().includes(query) ||
         order.id?.toLowerCase().includes(query) ||
         order.paymentMethod?.toLowerCase().includes(query) ||
@@ -201,6 +230,10 @@ export default function AdminOrdersPage() {
               const formattedDate = `${month} ${day}, ${year}`;
               const formattedTime = orderDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
               
+              const userProfile = order.userId ? userLookup[order.userId] : undefined;
+              const displayName = userProfile?.name || order.userEmail || 'Unknown User';
+              const displayEmail = userProfile?.email || order.userEmail || 'No email';
+
               return (
               <div
                 key={order.id}
@@ -223,8 +256,8 @@ export default function AdminOrdersPage() {
                         {order.status === 'pending' && '⏳'} {order.status === 'approved' && '✅'} {order.status === 'rejected' && '❌'} {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                       </span>
                     </div>
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{order.userEmail}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">User ID: {order.userId?.substring(0, 12) || 'N/A'}</p>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{displayName}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{displayEmail}</p>
                   </div>
                   <button
                     onClick={() => {

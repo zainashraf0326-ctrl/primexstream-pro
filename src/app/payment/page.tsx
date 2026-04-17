@@ -1,28 +1,38 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { FaPaypal, FaRegCreditCard, FaUniversity } from 'react-icons/fa';
+import { SiBinance } from 'react-icons/si';
+import { GiMoneyStack } from 'react-icons/gi';
+import { CheckCircle2, Loader } from 'lucide-react';
 import { useApp } from '@/components/providers/app-provider';
 import { AppLayout } from '@/components/app-layout';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { createOrder, uploadPaymentProof, getConfig, ConfigData } from '@/lib/firebase-service';
-import { Loader, ChevronDown } from 'lucide-react';
+import DiscountModal from '@/components/modals/DiscountModal';
+import AccountDetails from '@/components/Payment/AccountDetails';
 
-type PaymentMethod = 'remitly' | 'binance' | 'paypal' | 'cashapp';
+type PaymentMethod = 'remitly' | 'binance' | 'paypal' | 'cashapp' | 'zelle';
+
+const trustBadges = [
+  { title: 'Secure Verification' },
+  { title: 'Fast Confirmation' },
+  { title: 'Instant Delivery' },
+  { title: 'Trusted by Thousands' },
+];
 
 function PaymentContent() {
-  const [showWelcomePopup, setShowWelcomePopup] = useState(true); // Welcome popup state
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
   const [method, setMethod] = useState<PaymentMethod | null>(null);
-  const [expandedMethod, setExpandedMethod] = useState<PaymentMethod | null>(null);
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [txId, setTxId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [receipt, setReceipt] = useState<{ orderId: string; transactionId: string } | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
 
@@ -30,88 +40,51 @@ function PaymentContent() {
   const searchParams = useSearchParams();
   const { isLoggedIn, isLoading, user } = useApp();
 
-  // Load plan from config
   const planId = searchParams.get('plan') || '1month';
-  const getPlanData = () => {
-    if (!config) return null;
-    if (planId === '1month') return config.plans.plan1Month;
-    if (planId === '6month') return config.plans.plan6Month;
-    if (planId === '12month') return config.plans.plan12Month;
-    return null;
-  };
+  const plan =
+    !config
+      ? null
+      : planId === '6month'
+      ? config.plans.plan6Month
+      : planId === '12month'
+      ? config.plans.plan12Month
+      : config.plans.plan1Month;
 
-  const plan = getPlanData();
-  
-  // Use default values while config is loading
-  const originalPrice = plan?.price || (configLoading ? 0 : 20);
-  const salePrice = plan?.salePrice || (configLoading ? 0 : 20);
-  const saleDiscount = Math.max(0, originalPrice - salePrice);
-
+  const originalPrice = plan?.price || 20;
+  const salePrice = plan?.salePrice || 20;
   const isSpecialPayment = method === 'remitly' || method === 'binance';
-  const extraDiscount = isSpecialPayment ? Math.round((salePrice * 0.30) * 100) / 100 : 0;
+  const extraDiscount = isSpecialPayment ? Math.round(salePrice * 0.3 * 100) / 100 : 0;
   const finalPrice = Math.max(0, salePrice - extraDiscount);
-  const totalSavings = saleDiscount + extraDiscount;
-  const totalSavingsPercent = originalPrice > 0 ? Math.round((totalSavings / originalPrice) * 100) : 0;
 
   const paymentMethods = [
-    { id: 'remitly', name: 'Remitly', icon: '🔵' },
-    { id: 'binance', name: 'Binance', icon: '🟡' },
-    { id: 'paypal', name: 'PayPal', icon: '💙' },
-    { id: 'cashapp', name: 'Cash App', icon: '💚' },
-  ];
+    { id: 'binance', name: 'Binance', subtitle: 'Crypto Payment', icon: SiBinance, isDiscounted: true },
+    { id: 'remitly', name: 'Remitly', subtitle: 'Money Transfer', icon: GiMoneyStack, isDiscounted: true },
+    { id: 'paypal', name: 'PayPal', subtitle: 'Trusted Payment', icon: FaPaypal, isDiscounted: false },
+    { id: 'cashapp', name: 'Cash App', subtitle: 'Card Transfer', icon: FaRegCreditCard, isDiscounted: false },
+    { id: 'zelle', name: 'Zelle', subtitle: 'Bank Transfer', icon: FaUniversity, isDiscounted: false },
+  ] as const;
 
-  // Get payment method details from config
   const getPaymentMethodDetails = (methodId: PaymentMethod) => {
-    if (!config) return { instructions: 'Loading...', accountInfo: [] };
-    
-    let paymentMethod: any = null;
-    
-    if (methodId === 'remitly') paymentMethod = config.paymentMethods.remitly;
-    else if (methodId === 'binance') paymentMethod = config.paymentMethods.binance;
-    else if (methodId === 'paypal') paymentMethod = config.paymentMethods.paypal || { instructions: 'Contact support', accountInfo: '' };
-    else if (methodId === 'cashapp') paymentMethod = config.paymentMethods.cashapp || { instructions: 'Contact support', accountInfo: '' };
-    
-    if (!paymentMethod) return { instructions: 'Loading...', accountInfo: [] };
-
-    return {
-      instructions: paymentMethod.instructions || 'Contact support for payment instructions',
-      accountInfo: paymentMethod.accountInfo 
-        ? [{ name: 'Account Info', value: paymentMethod.accountInfo }]
-        : [],
+    if (!config) return { instructions: 'Loading...', accountInfo: [] as { name: string; value: string }[] };
+    const methodMap: Record<PaymentMethod, { instructions?: string; accountInfo?: string }> = {
+      remitly: config.paymentMethods.remitly,
+      binance: config.paymentMethods.binance,
+      paypal: config.paymentMethods.paypal || { instructions: 'Contact support', accountInfo: '' },
+      cashapp: config.paymentMethods.cashapp || { instructions: 'Contact support', accountInfo: '' },
+      zelle: { instructions: 'Contact support for Zelle payment instructions.', accountInfo: '' },
     };
-  };
-
-  // Copy to clipboard function
-  const copyToClipboard = (text: string, fieldName: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(fieldName);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  // Handle method selection and expand accordion
-  const handleMethodSelect = (methodId: PaymentMethod) => {
-    setMethod(methodId);
-    setExpandedMethod(methodId);
-  };
-
-  // Handle continue to step 2
-  const handleContinueToStep2 = () => {
-    if (!method) {
-      setError('Please select a payment method');
-      return;
-    }
-    setError('');
-    setCurrentStep(2);
+    const selected = methodMap[methodId];
+    return {
+      instructions: selected?.instructions || 'Contact support for payment instructions',
+      accountInfo: selected?.accountInfo ? [{ name: 'Account Info', value: selected.accountInfo }] : [],
+    };
   };
 
   useEffect(() => {
     if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    }
+    if (!isLoggedIn) router.push('/login');
   }, [isLoggedIn, isLoading, router]);
 
-  // Load payment details from Firebase config
   useEffect(() => {
     const loadConfig = async () => {
       try {
@@ -123,54 +96,31 @@ function PaymentContent() {
         setConfigLoading(false);
       }
     };
-
     loadConfig();
   }, []);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setScreenshot(file);
-      setError('');
-    }
-  };
+  useEffect(() => {
+    if (isLoading || configLoading) return;
+    const timer = setTimeout(() => setShowDiscountModal(true), 40);
+    return () => clearTimeout(timer);
+  }, [isLoading, configLoading]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     try {
-      if (!user) {
-        setError('User not found');
+      if (!user || !method || !screenshot || !txId) {
+        setError('Please complete all required fields.');
         return;
       }
-
-      if (!method) {
-        setError('Please select a payment method');
-        return;
-      }
-
-      if (!screenshot) {
-        setError('Please upload a payment proof');
-        return;
-      }
-
-      if (!txId) {
-        setError('Please enter transaction ID');
-        return;
-      }
-
-      // Upload payment proof to Supabase
       const { path: proofPath, url: proofUrl } = await uploadPaymentProof(user.id, screenshot);
-
-      // Create order in Firebase
       const order = await createOrder(user.id, {
-        planId: planId,
+        planId,
         plan: plan?.name || 'IPTV Plan',
-        originalPrice: originalPrice,
-        salePrice: salePrice,
-        finalPrice: finalPrice,
+        originalPrice,
+        salePrice,
+        finalPrice,
         paymentMethod: method,
         paymentProofPath: proofPath,
         paymentProof: proofUrl,
@@ -179,12 +129,7 @@ function PaymentContent() {
         date: new Date().toLocaleDateString(),
         user: user.name,
       });
-
-      // Show receipt instead of just success message
-      setReceipt({
-        orderId: order.id || 'ORD' + Date.now(),
-        transactionId: txId,
-      });
+      setReceipt({ orderId: order.id || `ORD${Date.now()}`, transactionId: txId });
       setSuccess(true);
     } catch (err: any) {
       setError(err.message || 'Error processing payment');
@@ -193,413 +138,166 @@ function PaymentContent() {
     }
   };
 
-  if (isLoading || configLoading) return (
-    <AppLayout title="Payment">
-      <div className="text-center py-12">
-        <p className="text-slate-600 dark:text-slate-400">Loading payment options...</p>
-      </div>
-    </AppLayout>
-  );
+  if (isLoading || configLoading) {
+    return (
+      <AppLayout title="Payment">
+        <div className="text-center py-12 text-slate-600 dark:text-slate-400">Loading payment options...</div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout title="Payment">
-      <div className="w-full relative">
-        <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16">
-          <div className="space-y-6">
-            {/* WELCOME POPUP - Floating top notification */}
-            {showWelcomePopup && (
-              <div className="animate-in fade-in slide-in-from-top-4 duration-500">
-                <Card className="glass bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/40 dark:to-orange-900/40 border-2 border-red-300 dark:border-red-600 relative shadow-lg">
-                  {/* Close Button X */}
-                  <button
-                    onClick={() => setShowWelcomePopup(false)}
-                    className="absolute top-4 right-4 w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-lg hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition z-10"
+      <DiscountModal isOpen={showDiscountModal} onContinue={() => setShowDiscountModal(false)} />
+      <div className="w-full">
+        <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16 space-y-6">
+          {!success && (
+            <div className="flex items-center justify-between rounded-lg bg-slate-100 dark:bg-slate-800 px-4 py-3">
+              {[1, 2].map((step) => (
+                <div key={step} className="flex items-center gap-2">
+                  <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold ${step <= currentStep ? 'bg-emerald-500 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                    {step}
+                  </div>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                    {step === 1 ? 'Payment Method' : 'Verification'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {success && receipt ? (
+            <Card className="glass border-emerald-200 dark:border-emerald-700/30">
+              <CardContent className="space-y-4 pt-8">
+                <h3 className="text-2xl font-bold text-emerald-600">Payment Submitted</h3>
+                <p className="text-slate-700 dark:text-slate-300">Order ID: {receipt.orderId}</p>
+                <p className="text-slate-700 dark:text-slate-300">Transaction ID: {receipt.transactionId}</p>
+                <Button onClick={() => router.push('/dashboard')} className="bg-emerald-600 hover:bg-emerald-700">
+                  Go to Dashboard
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {currentStep === 1 && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                    {paymentMethods.map((pm) => {
+                      const Icon = pm.icon;
+                      const selected = method === pm.id;
+                      return (
+                        <button
+                          key={pm.id}
+                          onClick={() => setMethod(pm.id)}
+                          className={`relative rounded-2xl p-5 text-left transition-all border ${
+                            selected
+                              ? 'border-emerald-500 bg-white dark:bg-slate-900 shadow-xl'
+                              : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:shadow-md'
+                          } ${
+                            pm.isDiscounted
+                              ? 'shadow-[0_0_0_1px_rgba(239,68,68,0.25),0_8px_24px_rgba(249,115,22,0.25)]'
+                              : ''
+                          }`}
+                        >
+                          {pm.isDiscounted && (
+                            <span className="absolute -top-2 -right-2 rounded-full bg-red-500 text-white text-[10px] font-bold px-2 py-1">
+                              SAVE 30%
+                            </span>
+                          )}
+                          <Icon className="h-8 w-8 text-slate-800 dark:text-slate-100" />
+                          <p className="mt-3 font-bold text-slate-900 dark:text-white">{pm.name}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{pm.subtitle}</p>
+                          {pm.isDiscounted && (
+                            <p className="mt-3 text-xs font-semibold text-red-600 dark:text-red-400">Recommended Lowest Cost</p>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {trustBadges.map((badge) => (
+                      <div key={badge.title} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-center">
+                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">{badge.title}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {method && (
+                    <AccountDetails
+                      method={method}
+                      instructions={getPaymentMethodDetails(method).instructions}
+                      accountInfo={getPaymentMethodDetails(method).accountInfo}
+                    />
+                  )}
+
+                  {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+
+                  <Button
+                    onClick={() => (method ? setCurrentStep(2) : setError('Please select a payment method.'))}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    disabled={!method}
                   >
-                    ✕
-                  </button>
+                    Continue to Verification
+                  </Button>
+                </div>
+              )}
 
-                  <CardContent className="pt-6 pb-6 space-y-5">
-                    {/* Header */}
-                    <div className="text-center space-y-3">
-                      <p className="text-4xl animate-bounce">🎁</p>
-                      <h2 className="text-2xl font-bold text-red-600 dark:text-red-400">Special Offer!</h2>
-                    </div>
+              {currentStep === 2 && (
+                <form onSubmit={handleSubmit} className="space-y-6">
+                  <Button type="button" variant="outline" onClick={() => setCurrentStep(1)}>
+                    Back to Payment Method
+                  </Button>
+                  <Card className="glass">
+                    <CardTitle className="mb-3">Upload Payment Proof</CardTitle>
+                    <CardContent className="space-y-4">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        aria-label="Upload payment proof"
+                        onChange={(e) => setScreenshot(e.target.files?.[0] || null)}
+                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 p-3"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Transaction ID"
+                        value={txId}
+                        onChange={(e) => setTxId(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 p-3 bg-white dark:bg-slate-800"
+                      />
+                    </CardContent>
+                  </Card>
 
-                    {/* Main Message */}
-                    <div className="bg-white/70 dark:bg-slate-800/70 rounded-2xl p-4 space-y-2 border border-red-200 dark:border-red-600/50">
-                      <p className="text-center font-bold text-slate-900 dark:text-white">
-                        Get <span className="text-2xl text-red-600 dark:text-red-400">+30% OFF</span>
-                      </p>
-                      <p className="text-center text-slate-700 dark:text-slate-300 font-semibold text-sm">
-                        When paying with{' '}
-                        <span className="text-blue-600 dark:text-blue-400 font-bold">Remitly</span>
-                        {' '}or{' '}
-                        <span className="text-yellow-600 dark:text-yellow-400 font-bold">Binance</span>
-                      </p>
-                    </div>
+                  <Card className="glass border-emerald-200 dark:border-emerald-700/30">
+                    <CardTitle className="mb-3">Plan Summary</CardTitle>
+                    <CardContent className="space-y-2">
+                      <p className="text-slate-700 dark:text-slate-300">{plan?.name || 'IPTV Plan'}</p>
+                      <p className="text-slate-700 dark:text-slate-300">Original: ${originalPrice.toFixed(2)}</p>
+                      <p className="text-slate-700 dark:text-slate-300">Sale: ${salePrice.toFixed(2)}</p>
+                      {isSpecialPayment && <p className="text-red-600 dark:text-red-400">Discount: -${extraDiscount.toFixed(2)}</p>}
+                      <p className="font-bold text-emerald-600">Total: ${finalPrice.toFixed(2)}</p>
+                    </CardContent>
+                  </Card>
 
-                    {/* Benefits List */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-xl">✨</span>
-                        <p className="text-slate-700 dark:text-slate-300">Lowest prices guaranteed</p>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-xl">⚡</span>
-                        <p className="text-slate-700 dark:text-slate-300">Instant confirmation</p>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-xl">🔒</span>
-                        <p className="text-slate-700 dark:text-slate-300">Secure payment</p>
-                      </div>
-                    </div>
+                  {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
-                    {/* Continue Button */}
-                    <Button
-                      onClick={() => setShowWelcomePopup(false)}
-                      className="w-full bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white font-bold py-2 text-sm rounded-xl"
-                    >
-                      ✓ Got It! Show Payment Methods
-                    </Button>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {success && receipt && (
-              <Card className="glass border-emerald-200 dark:border-emerald-700/30 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/30 dark:to-green-900/30 relative">
-                {/* Close Button */}
-                <button
-                  onClick={() => {
-                    setReceipt(null);
-                    setSuccess(false);
-                    router.push('/dashboard');
-                  }}
-                  className="absolute top-4 right-4 w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-800 text-white flex items-center justify-center transition-all duration-200 z-10"
-                  title="Close"
-                >
-                  <span className="text-xl font-bold">✕</span>
-                </button>
-                <CardContent className="pt-10 space-y-8">
-                  {/* Receipt Header */}
-                  <div className="text-center space-y-3 pb-6 border-b border-slate-200 dark:border-slate-700">
-                    <p className="text-5xl">✅</p>
-                    <h3 className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">Payment Successful!</h3>
-                    <p className="text-slate-600 dark:text-slate-400">Your order has been received and is pending verification</p>
-                  </div>
-
-                  {/* Receipt Details */}
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center p-4 bg-white/50 dark:bg-slate-800/30 rounded-lg">
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">Order ID:</span>
-                      <span className="font-mono font-bold text-slate-900 dark:text-white text-lg">{receipt.orderId}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-4 bg-white/50 dark:bg-slate-800/30 rounded-lg">
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">User Name:</span>
-                      <span className="font-semibold text-slate-900 dark:text-white">{user?.name || 'Customer'}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-4 bg-white/50 dark:bg-slate-800/30 rounded-lg">
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">Plan Name:</span>
-                      <span className="font-semibold text-slate-900 dark:text-white">{plan?.name || 'IPTV Plan'}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-4 bg-white/50 dark:bg-slate-800/30 rounded-lg">
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">Payment Method:</span>
-                      <span className="font-semibold text-slate-900 dark:text-white capitalize">{method || 'N/A'}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-4 bg-white/50 dark:bg-slate-800/30 rounded-lg">
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">Total Paid:</span>
-                      <span className="font-bold text-emerald-600 dark:text-emerald-400 text-xl">${finalPrice.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-4 bg-white/50 dark:bg-slate-800/30 rounded-lg">
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">Transaction ID:</span>
-                      <span className="font-mono font-bold text-slate-900 dark:text-white">{receipt.transactionId}</span>
-                    </div>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="flex gap-4 pt-6 border-t border-slate-200 dark:border-slate-700">
-                    <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => window.print()}>
-                      📥 Download Receipt
-                    </Button>
-                    <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => navigator.share?.({ title: 'Payment Receipt', text: `Order #${receipt.orderId} - ${finalPrice}` })}>
-                      📤 Share
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {!success && (
-              <>
-                {/* STEP 1: Payment Method Selection */}
-                {currentStep === 1 && (
-                  <div className="space-y-6">
-                    {/* Step Indicator */}
-                    <div className="flex items-center justify-between px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold">1</div>
-                        <span className="font-semibold text-slate-900 dark:text-white">Select Payment Method</span>
-                      </div>
-                      <span className="text-sm text-slate-600 dark:text-slate-400">(Step 1 of 2)</span>
-                    </div>
-
-                    {/* Payment Methods */}
-                    <Card className="glass">
-                      <CardTitle className="mb-4">Select Your Payment Method</CardTitle>
-                      <CardContent className="space-y-4">
-                        <div className="grid grid-cols-2 gap-3">
-                          {paymentMethods.map((pm) => (
-                            <button
-                              key={pm.id}
-                              onClick={() => handleMethodSelect(pm.id as PaymentMethod)}
-                              className={`p-4 rounded-2xl transition-all duration-200 relative overflow-visible animate-shine ${
-                                method === pm.id
-                                  ? 'ring-2 ring-emerald-500 bg-emerald-50/20 dark:bg-emerald-900/20 scale-105'
-                                  : 'bg-slate-100 dark:bg-slate-800 hover:scale-105'
-                              }`}
-                            >
-                              {(pm.id === 'remitly' || pm.id === 'binance') && (
-                                <div className="absolute top-3 right-3 bg-gradient-to-r from-red-500 to-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-lg shadow-lg z-10 whitespace-nowrap">
-                                  🎁 +30% OFF
-                                </div>
-                              )}
-                              <p className="text-3xl mb-2">{pm.icon}</p>
-                              <p className="font-semibold text-slate-900 dark:text-white text-sm">{pm.name}</p>
-                            </button>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Accordion for Instructions and Account Info */}
-                    {method && expandedMethod === method && (
-                      <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                        {/* Instructions Box */}
-                        <Card className="glass border-blue-200/50 dark:border-blue-700/30">
-                          <div
-                            onClick={() => setExpandedMethod(expandedMethod === method ? null : method)}
-                            className="cursor-pointer flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="text-2xl">📋</span>
-                              <h4 className="font-bold text-slate-900 dark:text-white">How to Send Payment</h4>
-                            </div>
-                            <ChevronDown className={`w-5 h-5 transition-transform ${expandedMethod === method ? 'rotate-180' : ''}`} />
-                          </div>
-                          <CardContent className="pt-2 pb-4 border-t border-slate-200 dark:border-slate-700">
-                            <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed">
-                              {getPaymentMethodDetails(method).instructions}
-                            </p>
-                          </CardContent>
-                        </Card>
-
-                        {/* Account Holder Information Box */}
-                        <Card className="glass border-green-200/50 dark:border-green-700/30">
-                          <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-t-2xl border-b border-slate-200 dark:border-slate-700">
-                            <h4 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                              <span>🔐</span> Account Information
-                            </h4>
-                          </div>
-                          <CardContent className="pt-4 space-y-3">
-                            {getPaymentMethodDetails(method).accountInfo.map((info, idx) => (
-                              <div
-                                key={idx}
-                                className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
-                              >
-                                <div>
-                                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400">{info.name}</p>
-                                  <p className="text-sm font-mono font-bold text-slate-900 dark:text-white break-all">{info.value}</p>
-                                </div>
-                                <button
-                                  onClick={() => copyToClipboard(info.value, info.name)}
-                                  className={`ml-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                                    copiedField === info.name
-                                      ? 'bg-emerald-500 text-white'
-                                      : 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white hover:bg-slate-300 dark:hover:bg-slate-600'
-                                  }`}
-                                >
-                                  {copiedField === info.name ? '✓ Copied' : '📋 Copy'}
-                                </button>
-                              </div>
-                            ))}
-                          </CardContent>
-                        </Card>
-
-                        {/* Bonus Discount Info (for Remitly/Binance) */}
-                        {isSpecialPayment && (
-                          <Card className="glass border-red-200/50 dark:border-red-700/30 bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20">
-                            <CardContent className="pt-4">
-                              <div className="flex items-start gap-3">
-                                <span className="text-2xl">🎁</span>
-                                <div>
-                                  <p className="font-bold text-red-700 dark:text-red-300">You get +30% Extra Discount!</p>
-                                  <p className="text-sm text-slate-600 dark:text-slate-400">Special bonus applied when paying with {method === 'remitly' ? 'Remitly' : 'Binance'}</p>
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        )}
-                      </div>
+                  <Button type="submit" disabled={!screenshot || !txId || loading} className="w-full bg-emerald-600 hover:bg-emerald-700">
+                    {loading ? (
+                      <>
+                        <Loader className="h-4 w-4 mr-2 animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 mr-2" />
+                        Confirm Payment (${finalPrice.toFixed(2)})
+                      </>
                     )}
-
-                    {error && <div className="p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-700/50 rounded-lg text-red-700 dark:text-red-300 text-sm">{error}</div>}
-
-                    {/* Continue Button */}
-                    <Button
-                      onClick={handleContinueToStep2}
-                      disabled={!method}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-3 text-lg"
-                      size="lg"
-                    >
-                      → Continue to Payment Proof ({method ? `${method}` : 'Select a method'})
-                    </Button>
-                  </div>
-                )}
-
-                {/* STEP 2: Payment Proof Upload */}
-                {currentStep === 2 && (
-                  <div className="space-y-6">
-                    {/* Step Indicator */}
-                    <div className="flex items-center justify-between px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold">2</div>
-                        <span className="font-semibold text-slate-900 dark:text-white">Upload Payment Proof</span>
-                      </div>
-                      <span className="text-sm text-slate-600 dark:text-slate-400">(Step 2 of 2)</span>
-                    </div>
-
-                    {/* Back Button */}
-                    <Button
-                      onClick={() => setCurrentStep(1)}
-                      variant="outline"
-                      className="w-full border-slate-300 dark:border-slate-600"
-                    >
-                      ← Back to Select Payment Method
-                    </Button>
-
-                    {/* Selected Payment Method Display */}
-                    <Card className="glass bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-blue-200/50 dark:border-blue-700/30">
-                      <CardContent className="pt-4">
-                        <p className="text-sm text-slate-600 dark:text-slate-400 mb-2">Selected Payment Method:</p>
-                        <div className="flex items-center gap-3">
-                          <span className="text-3xl">{paymentMethods.find(pm => pm.id === method)?.icon}</span>
-                          <div>
-                            <p className="font-bold text-slate-900 dark:text-white text-lg">{paymentMethods.find(pm => pm.id === method)?.name}</p>
-                            {isSpecialPayment && <p className="text-xs text-red-600 dark:text-red-400 font-semibold">🎁 +30% Bonus Applied</p>}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Payment Proof */}
-                    <Card className="glass">
-                      <CardTitle className="mb-4">📸 Payment Proof</CardTitle>
-                      <CardContent className="space-y-4">
-                        <div>
-                          <label htmlFor="payment-proof" className="block text-sm font-semibold text-slate-900 dark:text-white mb-3">Upload Screenshot</label>
-                          <input
-                            id="payment-proof"
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            disabled={loading}
-                            title="Upload payment proof screenshot"
-                            className="w-full px-4 py-4 rounded-2xl bg-white dark:bg-slate-800 border-2 border-dashed border-slate-300 dark:border-slate-600 text-slate-900 dark:text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-100 dark:file:bg-slate-700 file:text-slate-700 dark:file:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 transition-colors"
-                          />
-                          {screenshot && <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2">✓ {screenshot.name}</p>}
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-semibold text-slate-900 dark:text-white mb-3">Transaction ID</label>
-                          <input
-                            type="text"
-                            placeholder="Enter transaction ID/reference"
-                            value={txId}
-                            onChange={(e) => setTxId(e.target.value)}
-                            disabled={loading}
-                            className="w-full px-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-emerald-500 dark:focus:border-emerald-500 focus:outline-none transition-colors"
-                          />
-                        </div>
-
-                        {error && <p className="text-red-500 text-sm bg-red-50 dark:bg-red-950/30 p-3 rounded-lg">{error}</p>}
-                      </CardContent>
-                    </Card>
-
-                    {/* Plan Summary */}
-                    <Card className="glass border-emerald-200 dark:border-emerald-700/30">
-                      <CardTitle className="mb-4">Plan Summary</CardTitle>
-                      <CardContent className="space-y-4">
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <p className="font-bold text-slate-900 dark:text-white">{plan?.name || 'IPTV Plan'}</p>
-                            <p className="text-sm text-slate-600 dark:text-slate-400">{plan?.duration || 'Plan'}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="line-through text-slate-400">${originalPrice.toFixed(2)}</p>
-                            <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">${salePrice.toFixed(2)}</p>
-                          </div>
-                        </div>
-
-                        {isSpecialPayment && (
-                          <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
-                            <div className="bg-gradient-to-r from-red-500 to-orange-500 rounded-xl p-4 mb-4 shadow-lg">
-                              <p className="text-lg font-bold text-white mb-1">🎁 30% BONUS DISCOUNT!</p>
-                              <p className="text-sm text-white/90">Special offer on Remitly & Binance</p>
-                            </div>
-                            <div className="bg-red-50 dark:bg-red-900/30 rounded-xl p-4 border-2 border-red-200 dark:border-red-700/50">
-                              <div className="space-y-3">
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600 dark:text-slate-400 font-medium">Sale Price:</span>
-                                  <span className="font-semibold text-slate-900 dark:text-white">${salePrice.toFixed(2)}</span>
-                                </div>
-                                <div className="flex justify-between bg-red-100 dark:bg-red-900/50 rounded-lg p-2">
-                                  <span className="text-red-700 dark:text-red-300 font-bold">Extra Discount (30%):</span>
-                                  <span className="font-bold text-red-600 dark:text-red-400 text-lg">-${extraDiscount.toFixed(2)}</span>
-                                </div>
-                                <div className="h-px bg-slate-300 dark:bg-slate-600"></div>
-                                <div className="flex justify-between pt-2">
-                                  <span className="text-emerald-700 dark:text-emerald-300 font-bold text-lg">Your Final Price:</span>
-                                  <span className="text-emerald-600 dark:text-emerald-400 font-bold text-2xl">${finalPrice.toFixed(2)}</span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {!isSpecialPayment && (
-                          <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
-                            <div className="flex justify-between text-lg font-bold">
-                              <span className="text-emerald-600 dark:text-emerald-400">Total Amount:</span>
-                              <span className="text-emerald-600 dark:text-emerald-400">${finalPrice.toFixed(2)}</span>
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    {/* Submit Form */}
-                    <form onSubmit={handleSubmit}>
-                      <Button
-                        type="submit"
-                        disabled={!screenshot || !txId || loading}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-                        size="lg"
-                      >
-                        {loading ? (
-                          <>
-                            <Loader className="w-4 h-4 animate-spin mr-2" />
-                            Processing...
-                          </>
-                        ) : (
-                          `✓ Confirm Payment ($${finalPrice.toFixed(2)})`
-                        )}
-                      </Button>
-                    </form>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+                  </Button>
+                </form>
+              )}
+            </>
+          )}
         </div>
       </div>
     </AppLayout>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useApp } from '@/components/providers/app-provider';
+import { useAdmin } from '@/components/providers/admin-provider';
 import AdminLayout from '@/components/admin-layout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -70,7 +70,7 @@ const platformIcons = {
 };
 
 export default function SocialTasksAdminPage() {
-  const { user, isLoggedIn, isLoading } = useApp();
+  const { user, isLoading } = useAdmin();
   const router = useRouter();
   const [submissions, setSubmissions] = useState<SocialTaskSubmission[]>([]);
   const [filteredSubmissions, setFilteredSubmissions] = useState<SocialTaskSubmission[]>([]);
@@ -83,14 +83,14 @@ export default function SocialTasksAdminPage() {
   // Check admin access
   useEffect(() => {
     if (isLoading) return;
-    if (!isLoggedIn || user?.role !== 'admin') {
-      router.push('/login');
+    if (!user) {
+      router.push('/admin/login');
     }
-  }, [isLoggedIn, isLoading, user, router]);
+  }, [isLoading, user, router]);
 
   // Fetch social task submissions
   useEffect(() => {
-    if (!isLoggedIn || user?.role !== 'admin') return;
+    if (!user) return;
 
     const submissionsRef = collection(db, 'socialTaskSubmissions');
     const q = query(submissionsRef);
@@ -120,7 +120,7 @@ export default function SocialTasksAdminPage() {
     );
 
     return () => unsubscribe();
-  }, [isLoggedIn, user]);
+  }, [user]);
 
   // Filter submissions
   useEffect(() => {
@@ -304,7 +304,7 @@ export default function SocialTasksAdminPage() {
             <Button
               key={status}
               onClick={() => setFilterStatus(status)}
-              variant={filterStatus === status ? 'default' : 'outline'}
+              variant={filterStatus === status ? 'primary' : 'outline'}
               className="gap-2 capitalize"
             >
               {status === 'all' && 'All'}
@@ -341,9 +341,9 @@ export default function SocialTasksAdminPage() {
         ) : (
           <div className="grid gap-4">
             {filteredSubmissions.map((submission) => (
-              <Card
+              <div
                 key={submission.id}
-                className={`p-6 glass glass-light dark:glass cursor-pointer transition-all hover:shadow-lg ${
+                className={`p-6 glass glass-light dark:glass cursor-pointer transition-all hover:shadow-lg rounded-lg border ${
                   submission.approvalStatus === 'pending'
                     ? 'border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-900/10'
                     : submission.approvalStatus === 'approved'
@@ -527,7 +527,7 @@ export default function SocialTasksAdminPage() {
                     )}
                   </div>
                 )}
-              </Card>
+              </div>
             ))}
           </div>
         )}

@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===== SIMPLE RULES: ADMIN FULL ACCESS, USERS READ-ONLY =====
+    
+    // Users collection - Users can read ALL users, admin can read/write
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+      
+      // Notifications subcollection - Anyone can write to own, admin can write to all
+      match /notifications/{notificationId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null;
+      }
+    }
+
+    // Orders collection - Users can read, admin can read/write
+    match /orders/{orderId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // Referrals collection - Users can read, admin can read/write
+    match /referrals/{referralId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // Wallets collection - Users can read, admin can read/write
+    match /wallets/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+      
+      match /transactions/{transactionId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+      }
+    }
+
+    // Plans collection - Public read, admin write
+    match /plans/{planId} {
+      allow read: if true;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // Rewards collection - Users can read, admin can read/write
+    match /rewards/{rewardId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // WebConfig collection - Public read, admin write
+    match /webConfig/{document=**} {
+      allow read: if true;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // Settings collection - Users can read, admin can read/write
+    match /settings/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // Social task submissions - Users can read, admin can read/write
+    match /socialTaskSubmissions/{submissionId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // Admin content - Users can read, admin can read/write
+    match /adminContent/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // Deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

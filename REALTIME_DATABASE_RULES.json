@@ -1,21 +1,28 @@
 {
   "rules": {
+    // ===== USERS ====
     "users": {
       "$uid": {
-        ".read": "auth != null && (auth.uid == $uid || root.child('adminUsers').child(auth.uid).val() === true)",
-        ".write": "auth.uid == $uid || root.child('adminUsers').child(auth.uid).val() === true",
+        ".read": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
+        ".write": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
         ".validate": "newData.hasChildren(['email', 'name'])"
       }
     },
+
+    // ===== ORDERS (Main Fix) ====
     "orders": {
       "$uid": {
-        ".read": "auth != null && (auth.uid == $uid || root.child('adminUsers').child(auth.uid).val() === true)",
-        ".write": "auth != null && (auth.uid == $uid || root.child('adminUsers').child(auth.uid).val() === true)",
+        ".read": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
+        ".write": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
         "$orderId": {
+          ".read": "auth != null && (root.child('orders').child(auth.uid).child($orderId).exists() || auth.email == 'zainashraf0326@gmail.com')",
+          ".write": "auth != null && (auth.uid == $uid || auth.email == 'zainashraf0326@gmail.com')",
           ".validate": "newData.hasChildren(['plan', 'amount', 'status'])"
         }
       }
     },
+
+    // ===== REFERRALS ====
     "referrals": {
       ".read": "auth != null",
       ".write": "auth != null",
@@ -23,13 +30,16 @@
         ".validate": "newData.hasChildren(['referrerId', 'referredUserId'])"
       }
     },
+
+    // ===== CONFIG & SETTINGS ====
     "config": {
       ".read": "auth != null",
-      ".write": "root.child('adminUsers').child(auth.uid).val() === true"
+      ".write": "auth.email == 'zainashraf0326@gmail.com'"
     },
+
     "admin_settings": {
       ".read": "auth != null",
-      ".write": "root.child('adminUsers').child(auth.uid).val() === true",
+      ".write": "auth.email == 'zainashraf0326@gmail.com'",
       "payment": {
         ".validate": "newData.hasChildren(['methodName', 'instructions', 'accountInfo'])"
       },
@@ -37,17 +47,32 @@
         ".validate": "newData.hasChildren(['youtube', 'instagram', 'facebook', 'tiktok', 'twitter', 'telegram'])"
       }
     },
+
+    // ===== NOTIFICATIONS ====
     "notifications": {
-      ".read": "auth != null",
-      ".write": "auth != null"
+      "$userId": {
+        ".read": "auth != null && (auth.uid == $userId || auth.email == 'zainashraf0326@gmail.com')",
+        ".write": "auth != null"
+      }
     },
+
+    // ===== PLANS (Read-Only for Users) ====
     "plans": {
       ".read": true,
-      ".write": "root.child('adminUsers').child(auth.uid).val() === true"
+      ".write": "auth.email == 'zainashraf0326@gmail.com'"
     },
+
+    // ===== ADMIN FUNCTIONS ====
     "adminUsers": {
       ".read": "auth != null",
-      ".write": false
+      ".write": "auth.email == 'zainashraf0326@gmail.com'"
+    },
+
+    // ===== DENY ALL OTHER PATHS ====
+    ".read": false,
+    ".write": false
+  }
+}
     },
     ".read": false,
     ".write": false

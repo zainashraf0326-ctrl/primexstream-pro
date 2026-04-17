@@ -219,7 +219,7 @@ function LoginContent() {
             onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
             icon={<Lock className="w-5 h-5" />}
-            helperText={!isLogin && 'At least 6 characters'}
+            helperText={!isLogin ? 'At least 6 characters' : undefined}
           />
 
           {/* Confirm Password (Signup only) */}

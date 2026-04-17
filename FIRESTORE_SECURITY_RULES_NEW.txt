@@ -1,0 +1,123 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ========================================
+    // ADMIN FULL ACCESS - zainashraf0326@gmail.com
+    // USERS - OWN DATA ONLY
+    // ALL PATHS REQUIRE LOGIN
+    // ========================================
+
+    function isAdmin() {
+      // Check by email (primary) or by UID for testing
+      return request.auth != null && (
+        request.auth.email == 'zainashraf0326@gmail.com' ||
+        // Allow authenticated user to write webConfig (temporary for testing)
+        // Remove this line once we verify the correct admin UID
+        request.path[0] == 'webConfig'
+      );
+    }
+
+    function isUser() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // ===== USERS COLLECTION =====
+    // Users can read own data, admin reads all
+    match /users/{userId} {
+      allow read: if isUser() && (isOwner(userId) || isAdmin());
+      allow write: if isAdmin();
+      
+      // NOTIFICATIONS SUBCOLLECTION
+      // User can create/update own notifications, mark as read, delete if read
+      match /notifications/{notificationId} {
+        allow read: if isUser() && (isOwner(userId) || isAdmin());
+        allow create: if isUser() && isOwner(userId);
+        allow update: if isUser() && (isOwner(userId) || isAdmin());
+        allow delete: if isUser() && (isOwner(userId) || (resource.data.read == true && isOwner(userId)) || isAdmin());
+      }
+    }
+
+    // ===== ORDERS COLLECTION =====
+    // Users can create/update own orders, admin full control
+    match /orders/{orderId} {
+      allow read: if isUser() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isUser() && request.resource.data.userId == request.auth.uid;
+      allow update: if isUser() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ===== REFERRALS COLLECTION =====
+    // Users can create own referrals, admin full control
+    match /referrals/{referralId} {
+      allow read: if isUser();
+      allow create: if isUser() && request.resource.data.referrerId == request.auth.uid;
+      allow update: if isUser() && (request.auth.uid == resource.data.referrerId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ===== PLANS COLLECTION =====
+    // Read only for authenticated users, admin can write
+    match /plans/{planId} {
+      allow read: if isUser();
+      allow write: if isAdmin();
+    }
+
+    // ===== WALLETS COLLECTION =====
+    // Users can read own wallet, admin full control
+    match /wallets/{userId} {
+      allow read: if isUser() && (isOwner(userId) || isAdmin());
+      allow write: if isAdmin();
+      
+      match /transactions/{transactionId} {
+        allow read: if isUser() && (isOwner(userId) || isAdmin());
+        allow write: if isAdmin();
+      }
+    }
+
+    // ===== REWARDS COLLECTION =====
+    // Users can read, admin writes
+    match /rewards/{rewardId} {
+      allow read: if isUser();
+      allow write: if isAdmin();
+    }
+
+    // ===== SETTINGS COLLECTION =====
+    // Users can read, admin writes
+    match /settings/{document=**} {
+      allow read: if isUser();
+      allow write: if isAdmin();
+    }
+
+    // ===== WEBCONFIG COLLECTION =====
+    // Users can read, authenticated users can write (for admin config page)
+    match /webConfig/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.email == 'zainashraf0326@gmail.com';
+    }
+
+    // ===== ADMIN CONTENT COLLECTION =====
+    // Users can read, admin writes
+    match /adminContent/{document=**} {
+      allow read: if isUser();
+      allow write: if isAdmin();
+    }
+
+    // ===== SOCIAL TASK SUBMISSIONS =====
+    // Users can read all, create own, admin full control
+    match /socialTaskSubmissions/{submissionId} {
+      allow read: if isUser();
+      allow create: if isUser() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // ===== DENY ALL OTHER PATHS =====
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

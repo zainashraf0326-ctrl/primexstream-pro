@@ -107,14 +107,15 @@ export async function notifyOrderCreated(
   }
 ): Promise<string | null> {
   try {
-    const notifRef = collection(db, 'notifications');
+    // Use correct Firestore path: users/{userId}/notifications
+    const notifRef = collection(db, 'users', userId, 'notifications');
     const docRef = await addDoc(notifRef, {
       userId,
       title: '✅ Order Created Successfully',
       message: `Your order for ${orderData.planName} (₹${orderData.amount}) has been created and is ${orderData.status}. Your order will be processed shortly.`,
       type: 'order_created',
-      isRead: false,
-      isDeleted: false,
+      read: false,
+      deleted: false,
       createdAt: Timestamp.now(),
       data: {
         orderId: orderData.orderId,
@@ -152,7 +153,8 @@ export async function notifyOrderAccepted(
       ? `\n📱 Username: ${orderData.credentials.username}\n🔐 Password: ${orderData.credentials.password}\n🌐 URL: ${orderData.credentials.url}\n📅 Expires: ${orderData.credentials.expiryDate}`
       : '';
 
-    const notifRef = collection(db, 'notifications');
+    // Use correct Firestore path: users/{userId}/notifications
+    const notifRef = collection(db, 'users', userId, 'notifications');
     const docRef = await addDoc(notifRef, {
       userId,
       title: '🎉 Order Approved!',
@@ -187,7 +189,7 @@ export async function notifyOrderRejected(
   }
 ): Promise<string | null> {
   try {
-    const notifRef = collection(db, 'notifications');
+    const notifRef = collection(db, 'users', userId, 'notifications');
     const docRef = await addDoc(notifRef, {
       userId,
       title: '❌ Order Rejected',
@@ -225,14 +227,15 @@ export async function notifyReferrerNewSignup(
   }
 ): Promise<string | null> {
   try {
-    const notifRef = collection(db, 'notifications');
+    // Use correct Firestore path: users/{userId}/notifications
+    const notifRef = collection(db, 'users', referrerId, 'notifications');
     const docRef = await addDoc(notifRef, {
       userId: referrerId,
       title: '🎯 New Referral Signup!',
       message: `${referredUserData.referredName} is your new referral! 🎉\n\nEncourage them to buy a subscription to enjoy all features. You'll earn rewards when they purchase!\n\nYou now have ${referredUserData.referralCount} referrals total.`,
       type: 'referral',
-      isRead: false,
-      isDeleted: false,
+      read: false,
+      deleted: false,
       createdAt: Timestamp.now(),
       data: {
         referrerId,
@@ -260,14 +263,15 @@ export async function notifyReferredUserWelcome(
   subscriptionDiscount: number = 10
 ): Promise<string | null> {
   try {
-    const notifRef = collection(db, 'notifications');
+    // Use correct Firestore path: users/{userId}/notifications
+    const notifRef = collection(db, 'users', referredUserId, 'notifications');
     const docRef = await addDoc(notifRef, {
       userId: referredUserId,
       title: `👋 Welcome to ${referrerName}'s Team!`,
       message: `Welcome! You've been referred by ${referrerName}. 🌟\n\n💝 Special Offer: Get ${subscriptionDiscount}% discount on your first subscription!\n\nVisit the Earn section to see your benefits and complete your purchase.`,
       type: 'referral',
-      isRead: false,
-      isDeleted: false,
+      read: false,
+      deleted: false,
       createdAt: Timestamp.now(),
       data: {
         referrerId: referrerName,
@@ -304,14 +308,15 @@ export async function notifyAdminNewOrder(
       return null;
     }
 
-    const notifRef = collection(db, 'notifications');
+    // Use correct Firestore path: users/{userId}/notifications
+    const notifRef = collection(db, 'users', adminUserId, 'notifications');
     const docRef = await addDoc(notifRef, {
       userId: adminUserId, // Use actual admin user ID, not email
       title: '📋 New Order Received',
       message: `New order pending approval!\n\n👤 Customer: ${orderData.userName}\n📧 Email: ${orderData.userEmail}\n📱 Plan: ${orderData.planName}\n💰 Amount: ₹${orderData.amount}\n\nClick "Go to Orders" button to review and approve/reject this order.`,
       type: 'order_created',
-      isRead: false,
-      isDeleted: false,
+      read: false,
+      deleted: false,
       createdAt: Timestamp.now(),
       data: {
         orderId: orderData.orderId,
@@ -338,14 +343,15 @@ export async function notifySubscriptionReminder(
   message: string = 'Buy a subscription to unlock all features!'
 ): Promise<string | null> {
   try {
-    const notifRef = collection(db, 'notifications');
+    // Use correct Firestore path: users/{userId}/notifications
+    const notifRef = collection(db, 'users', userId, 'notifications');
     const docRef = await addDoc(notifRef, {
       userId,
       title: '🛍️ Subscription Reminder',
       message,
       type: 'reminder',
-      isRead: false,
-      isDeleted: false,
+      read: false,
+      deleted: false,
       createdAt: Timestamp.now(),
       data: {
         link: '/iptv',
@@ -368,8 +374,7 @@ export async function notifySubscriptionReminder(
 export async function getActiveNotifications(userId: string): Promise<NotificationData[]> {
   try {
     const q = query(
-      collection(db, 'notifications'),
-      where('userId', '==', userId),
+      collection(db, 'users', userId, 'notifications'),
       where('isDeleted', '==', false),
       orderBy('createdAt', 'desc')
     );
