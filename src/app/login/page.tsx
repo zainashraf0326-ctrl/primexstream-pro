@@ -1,14 +1,22 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { auth } from '@/lib/firebase-config';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { createUser, getUserByReferralCode, recordReferral } from '@/lib/firestore-service';
+import { Mail, Lock } from 'lucide-react';
+import {
+  getAuthErrorMessage,
+  signInWithEmailPassword,
+  signUpWithEmailPassword,
+} from '@/services/authService';
+import { ensureUserProfile } from '@/services/dbService';
+import {
+  createUser,
+  getUserByReferralCode,
+  recordReferral,
+} from '@/lib/supabase-user-service';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardTitle, CardDescription } from '@/components/ui/card';
-import { Mail, Lock, Loader } from 'lucide-react';
+import { Card, CardDescription } from '@/components/ui/card';
 
 function LoginContent() {
   const [isLogin, setIsLogin] = useState(true);
@@ -23,16 +31,11 @@ function LoginContent() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    // Get referral code from URL if present
     const ref = searchParams.get('ref');
     if (ref) {
       setReferralCode(ref);
     }
   }, [searchParams]);
-
-  const generateReferralCode = () => {
-    return Math.random().toString(36).substr(2, 9).toUpperCase();
-  };
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,20 +48,16 @@ function LoginContent() {
         setLoading(false);
         return;
       }
+
       if (password !== confirmPassword) {
         setError('Passwords do not match');
         setLoading(false);
         return;
       }
 
-      // Create user in Firebase Auth
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
+      const authUser = await signUpWithEmailPassword({ name, email, password });
+      await ensureUserProfile(authUser.uid, { name, email });
 
-      // Update display name in Auth
-      await updateProfile(user, { displayName: name });
-
-      // Check if user was referred
       let referrerId = null;
       if (referralCode) {
         const referrer = await getUserByReferralCode(referralCode);
@@ -67,27 +66,19 @@ function LoginContent() {
         }
       }
 
-      // Create user in Firestore
-      await createUser(user.uid, {
-        name: name,
-        email: email,
+      await createUser(authUser.uid, {
+        name,
+        email,
         referredBy: referrerId || undefined,
       });
 
-      // Record referral if user was referred
       if (referrerId) {
-        await recordReferral(referrerId, user.uid);
+        await recordReferral(referrerId, authUser.uid);
       }
 
       router.push('/dashboard');
     } catch (err: any) {
-      if (err.code === 'auth/email-already-in-use') {
-        setError('Email already registered. Try logging in.');
-      } else if (err.code === 'auth/weak-password') {
-        setError('Password should be at least 6 characters');
-      } else {
-        setError(err.message || 'An error occurred');
-      }
+      setError(getAuthErrorMessage(err, 'Could not create your account.'));
     } finally {
       setLoading(false);
     }
@@ -99,75 +90,33 @@ function LoginContent() {
     setLoading(true);
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailPassword({ email, password });
       router.push('/dashboard');
     } catch (err: any) {
-      if (err.code === 'auth/user-not-found') {
-        setError('Email not registered. Please sign up first.');
-      } else if (err.code === 'auth/wrong-password') {
-        setError('Incorrect password');
-      } else {
-        setError(err.message || 'An error occurred');
-      }
+      setError(getAuthErrorMessage(err, 'Could not sign you in.'));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setError('');
-    setLoading(true);
-
-    try {
-      const provider = new GoogleAuthProvider();
-      const userCredential = await signInWithPopup(auth, provider);
-      const user = userCredential.user;
-
-      // Check if user was referred via URL
-      let referrerId = null;
-      if (referralCode) {
-        const referrer = await getUserByReferralCode(referralCode);
-        if (referrer) {
-          referrerId = referrer.id;
-        }
-      }
-
-      // Create user in Firestore if new
-      await createUser(user.uid, {
-        name: (user as any).displayName || 'User',
-        email: user.email || '',
-        referredBy: referrerId || undefined,
-      });
-
-      // Record referral if user was referred
-      if (referrerId) {
-        await recordReferral(referrerId, user.uid);
-      }
-
-      router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'Google sign-in failed');
-    } finally {
-      setLoading(false);
-    }
+  const handleGuestSignIn = async () => {
+    router.push('/iptv');
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     if (isLogin) {
-      handleSignIn(e);
+      void handleSignIn(e);
     } else {
-      handleSignUp(e);
+      void handleSignUp(e);
     }
   };
 
   return (
     <div className="min-h-screen bg-gradient-light dark:bg-gradient-dark flex items-center justify-center px-4 sm:px-6 lg:px-8 py-12">
-      {/* Animated background blobs */}
       <div className="absolute -top-40 right-0 w-96 h-96 bg-gradient-to-br from-emerald-300/20 to-transparent rounded-full blur-3xl animate-pulse" />
       <div className="absolute -bottom-40 left-0 w-96 h-96 bg-gradient-to-tr from-emerald-200/10 to-transparent rounded-full blur-3xl animate-pulse" />
 
       <Card className="w-full max-w-md glass border border-white/30 dark:border-slate-700/50 relative z-10">
-        {/* Header */}
         <div className="mb-10">
           <div className="inline-flex items-center gap-3 mb-6">
             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-bold text-xl">
@@ -177,16 +126,19 @@ function LoginContent() {
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
                 PrimexStream Pro
               </h1>
-              <p className="text-xs text-slate-600 dark:text-slate-400">Premium IPTV Service</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Premium IPTV Service
+              </p>
             </div>
           </div>
           <CardDescription className="text-base">
-            {isLogin ? '👋 Welcome back! Sign in to your account' : '🎉 Join our premium community today'}
+            {isLogin
+              ? 'ðŸ‘‹ Welcome back! Sign in to your account'
+              : 'ðŸŽ‰ Join our premium community today'}
           </CardDescription>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Name Input (Signup only) */}
           {!isLogin && (
             <Input
               label="Full Name"
@@ -199,7 +151,6 @@ function LoginContent() {
             />
           )}
 
-          {/* Email Input */}
           <Input
             label="Email"
             type="email"
@@ -210,11 +161,10 @@ function LoginContent() {
             icon={<Mail className="w-5 h-5" />}
           />
 
-          {/* Password Input */}
           <Input
             label="Password"
             type="password"
-            placeholder="••••••••"
+            placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
@@ -222,21 +172,23 @@ function LoginContent() {
             helperText={!isLogin ? 'At least 6 characters' : undefined}
           />
 
-          {/* Confirm Password (Signup only) */}
           {!isLogin && (
             <Input
               label="Confirm Password"
               type="password"
-              placeholder="••••••••"
+              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               disabled={loading}
               icon={<Lock className="w-5 h-5" />}
-              error={confirmPassword && password !== confirmPassword ? 'Passwords do not match' : ''}
+              error={
+                confirmPassword && password !== confirmPassword
+                  ? 'Passwords do not match'
+                  : ''
+              }
             />
           )}
 
-          {/* Referral Code (Signup only) */}
           {!isLogin && (
             <Input
               label="Referral Code (Optional)"
@@ -249,23 +201,25 @@ function LoginContent() {
             />
           )}
 
-          {/* Forgot Password Link (Login only) */}
           {isLogin && (
             <div className="text-right">
-              <a href="#" className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline font-medium">
+              <a
+                href="#"
+                className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline font-medium"
+              >
                 Forgot password?
               </a>
             </div>
           )}
 
-          {/* Error Message */}
           {error && (
             <div className="bg-red-50 dark:bg-red-950/30 border-l-4 border-red-500 p-4 rounded-lg">
-              <p className="text-red-700 dark:text-red-400 text-sm font-medium">{error}</p>
+              <p className="text-red-700 dark:text-red-400 text-sm font-medium">
+                {error}
+              </p>
             </div>
           )}
 
-          {/* Submit Button */}
           <Button
             type="submit"
             variant="primary"
@@ -279,34 +233,24 @@ function LoginContent() {
           </Button>
         </form>
 
-        {/* Divider */}
-        <div className="relative my-8">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-white/20 dark:border-slate-700/30" />
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-3 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-medium">
-              or
-            </span>
-          </div>
+        <div className="mt-4">
+          <p className="text-xs text-slate-500 dark:text-slate-500 mb-2 text-center">
+            Want to browse first? No account needed.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            fullWidth
+            onClick={handleGuestSignIn}
+            className="flex items-center justify-center gap-2 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <span>ðŸ‘¤</span>
+            Continue as Guest
+          </Button>
         </div>
 
-        {/* Google SignIn */}
-        <Button
-          type="button"
-          variant="secondary"
-          size="lg"
-          fullWidth
-          onClick={handleGoogleSignIn}
-          disabled={loading}
-          className="flex items-center justify-center gap-3"
-        >
-          <span className="text-xl">🔵</span>
-          Continue with Google
-        </Button>
-
-        {/* Toggle Link */}
-        <p className="text-center text-sm text-slate-600 dark:text-slate-400 mt-8">
+        <p className="text-center text-sm text-slate-600 dark:text-slate-400 mt-6">
           {isLogin ? "Don't have an account? " : 'Already have an account? '}
           <button
             type="button"
@@ -325,19 +269,18 @@ function LoginContent() {
           </button>
         </p>
 
-        {/* Trust Badges */}
         <div className="mt-8 pt-8 border-t border-white/10 dark:border-slate-700/20">
           <div className="flex items-center justify-center gap-4 text-xs text-slate-600 dark:text-slate-400">
             <div className="flex items-center gap-1">
-              <span>🔒</span>
+              <span>ðŸ”’</span>
               <span>Secure</span>
             </div>
             <div className="flex items-center gap-1">
-              <span>✓</span>
+              <span>âœ“</span>
               <span>Verified</span>
             </div>
             <div className="flex items-center gap-1">
-              <span>⚡</span>
+              <span>âš¡</span>
               <span>Instant Access</span>
             </div>
           </div>
@@ -349,7 +292,13 @@ function LoginContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          Loading...
+        </div>
+      }
+    >
       <LoginContent />
     </Suspense>
   );

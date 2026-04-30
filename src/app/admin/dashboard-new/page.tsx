@@ -5,8 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useApp } from '@/components/providers/app-provider';
 import { useAdmin } from '@/components/providers/admin-provider';
 import AdminLayout from '@/components/admin-layout';
-import { db } from '@/lib/firebase-config';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { supabase } from '@/lib/supabase-config';
 import { Card } from '@/components/ui/card';
 import { 
   Users, 
@@ -85,49 +84,48 @@ export default function AdminDashboardPage() {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      // Fetch all users
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const usersData: UserData[] = usersSnap.docs.map((doc) => ({
-        id: doc.id,
-        email: doc.data().email || '',
-        uid: doc.data().uid || doc.id,
-        joinDate: doc.data().createdAt?.toDate?.()?.toLocaleDateString() || 'N/A',
-        walletBalance: doc.data().walletBalance || 0,
+      const client = supabase;
+      if (!client) throw new Error('Supabase is not configured');
+
+      const { data: usersRows } = await client.from('users').select('*');
+      const usersData: UserData[] = (usersRows || []).map((row: any) => ({
+        id: row.id,
+        email: row.email || '',
+        uid: row.id,
+        joinDate: row.created_at ? new Date(row.created_at).toLocaleDateString() : 'N/A',
+        walletBalance: row.wallet_balance || row.usable_balance || 0,
       }));
       setUsers(usersData);
 
-      // Fetch all orders
-      const ordersSnap = await getDocs(collection(db, 'orders'));
-      const ordersData: OrderData[] = ordersSnap.docs.map((doc) => ({
-        id: doc.id,
-        userId: doc.data().userId || '',
-        userEmail: doc.data().userEmail || '',
-        amount: doc.data().amount || 0,
-        status: doc.data().status || 'unknown',
-        createdAt: doc.data().createdAt?.toDate?.()?.toLocaleDateString() || 'N/A',
-        planId: doc.data().planId || '',
+      const { data: orderRows } = await client.from('orders').select('*');
+      const ordersData: OrderData[] = (orderRows || []).map((row: any) => ({
+        id: row.id,
+        userId: row.user_id || '',
+        userEmail: row.user_email || '',
+        amount: row.amount || row.final_price || 0,
+        status: row.status || 'unknown',
+        createdAt: row.created_at ? new Date(row.created_at).toLocaleDateString() : 'N/A',
+        planId: row.plan_id || row.plan || '',
       }));
       setOrders(ordersData);
 
-      // Fetch all referrals
-      const referralsSnap = await getDocs(collection(db, 'referrals'));
-      const referralsData: ReferralData[] = referralsSnap.docs.map((doc) => ({
-        id: doc.id,
-        referrerId: doc.data().referrerId || '',
-        referredUserId: doc.data().referredUserId || '',
-        purchasedPlan: doc.data().purchasedPlan || false,
-        status: doc.data().status || 'pending',
+      const { data: referralRows } = await client.from('referrals').select('*');
+      const referralsData: ReferralData[] = (referralRows || []).map((row: any) => ({
+        id: row.id,
+        referrerId: row.referrer_uid || '',
+        referredUserId: row.referred_uid || '',
+        purchasedPlan: row.purchased_plan || false,
+        status: row.status || 'pending',
       }));
       setReferrals(referralsData);
 
-      // Fetch all notifications
-      const notificationsSnap = await getDocs(collection(db, 'notifications'));
-      const notificationsData: NotificationData[] = notificationsSnap.docs.map((doc) => ({
-        id: doc.id,
-        userId: doc.data().userId || '',
-        title: doc.data().title || '',
-        message: doc.data().message || '',
-        type: doc.data().type || 'info',
+      const { data: notificationRows } = await client.from('notifications').select('*');
+      const notificationsData: NotificationData[] = (notificationRows || []).map((row: any) => ({
+        id: row.id,
+        userId: row.user_id || '',
+        title: row.title || '',
+        message: row.message || '',
+        type: row.type || 'info',
       }));
       setNotifications(notificationsData);
 
@@ -144,7 +142,7 @@ export default function AdminDashboardPage() {
       });
     } catch (error) {
       console.error('Error fetching data:', error);
-      alert('Failed to load data. Check Firestore permissions.');
+      alert('Failed to load data from Supabase.');
     } finally {
       setLoading(false);
     }

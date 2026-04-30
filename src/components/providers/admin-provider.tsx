@@ -1,18 +1,12 @@
 'use client';
 
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import {
-  signInWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  User as FirebaseUser,
-} from 'firebase/auth';
-import { auth } from '@/lib/firebase-config';
+import { supabase } from '@/lib/supabase-config';
 
-const ADMIN_EMAIL = 'zainashraf0326@gmail.com';
+const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'zainashraf0326@gmail.com';
 
 interface AdminContextType {
-  user: FirebaseUser | null;
+  user: any | null;
   isAdmin: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
@@ -23,21 +17,24 @@ interface AdminContextType {
 const AdminContext = createContext<AdminContextType | undefined>(undefined);
 
 export function AdminProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser && firebaseUser.email === ADMIN_EMAIL) {
-        setUser(firebaseUser);
-      } else {
-        setUser(null);
-      }
+    supabase.auth.getSession().then(({ data }) => {
+      const u = data.session?.user;
+      setUser(u && u.email === ADMIN_EMAIL ? u : null);
       setIsLoading(false);
     });
 
-    return unsubscribe;
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      const u = session?.user;
+      setUser(u && u.email === ADMIN_EMAIL ? u : null);
+      setIsLoading(false);
+    });
+
+    return () => data.subscription.unsubscribe();
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -49,7 +46,8 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         throw new Error('Unauthorized. Only the admin can access this panel.');
       }
 
-      await signInWithEmailAndPassword(auth, email, password);
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
       setError(message);
@@ -60,7 +58,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     try {
       setError(null);
-      await firebaseSignOut(auth);
+      await supabase.auth.signOut();
       setUser(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Logout failed';

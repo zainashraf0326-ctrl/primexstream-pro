@@ -1,13 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useApp } from '@/components/providers/app-provider';
 import { AppLayout } from '@/components/app-layout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Clock, AlertCircle, XCircle, Eye, X, Copy } from 'lucide-react';
-import { listenToUserOrders } from '@/lib/firebase-service';
+import { CheckCircle, Clock, AlertCircle, XCircle, Eye, X, Copy, Smartphone } from 'lucide-react';
+import {
+  subscribeToAdminReplies,
+  subscribeToUserOrders,
+} from '@/services/dbService';
+import { ADMIN_APP_TASK_TITLE, listenToUserAdminAppTaskSubmissions, type AdminAppTaskSubmission } from '@/lib/admin-app-task';
 
 interface Order {
   id: string;
@@ -22,13 +25,41 @@ interface Order {
   paymentMethod?: string;
   finalPrice?: number;
   createdAt: any;
+  isGuest?: boolean;
+  guestEmail?: string;
+  guestName?: string;
 }
 
 interface Credentials {
   username: string;
   password: string;
-  url: string;
-  expiryDate: string;
+  url?: string;
+  expiryDate?: string;
+}
+
+interface HistoryItem {
+  id: string;
+  itemType: 'order' | 'task';
+  plan: string;
+  status: 'pending' | 'approved' | 'rejected' | 'completed' | 'expired' | 'active';
+  username?: string;
+  password?: string;
+  url?: string;
+  expiryDate?: string;
+  rejectReason?: string;
+  finalPrice?: number;
+  createdAt: any;
+  isGuest?: boolean;
+  subtitle: string;
+}
+
+interface AdminReply {
+  id: string;
+  title: string;
+  message: string;
+  status: string;
+  orderId?: string;
+  createdAt: string;
 }
 
 const getStatusIcon = (status: string) => {
@@ -69,9 +100,10 @@ const getStatusColor = (status: string) => {
 };
 
 export default function OrdersPage() {
-  const { isLoggedIn, isLoading, user } = useApp();
-  const router = useRouter();
+  const { isLoading, user } = useApp();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [taskSubmissions, setTaskSubmissions] = useState<AdminAppTaskSubmission[]>([]);
+  const [adminReplies, setAdminReplies] = useState<AdminReply[]>([]);
   const [showCredentials, setShowCredentials] = useState(false);
   const [selectedCredentials, setSelectedCredentials] = useState<Credentials | null>(null);
   const [showRejectionReason, setShowRejectionReason] = useState(false);
@@ -80,34 +112,81 @@ export default function OrdersPage() {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    }
-  }, [isLoggedIn, isLoading, router]);
-
-  // Real-time Firebase Realtime Database listener for orders
-  useEffect(() => {
     if (!user?.id) {
       setLoading(false);
       return;
     }
 
-    const unsubscribe = listenToUserOrders(user.id, (ordersData) => {
+    const unsubscribeOrders = subscribeToUserOrders(user.id, (ordersData: Order[]) => {
       setOrders(ordersData);
       setLoading(false);
     });
 
-    return () => unsubscribe && unsubscribe();
+    const unsubscribeReplies = subscribeToAdminReplies(user.id, (replyRows: AdminReply[]) => {
+      setAdminReplies(replyRows as AdminReply[]);
+    });
+
+    const unsubscribeTasks = listenToUserAdminAppTaskSubmissions(user.id, (rows) => {
+      setTaskSubmissions(
+        rows.filter(
+          (submission) =>
+            submission.approvalStatus === 'approved' ||
+            submission.approvalStatus === 'rejected'
+        )
+      );
+    });
+
+    return () => {
+      unsubscribeOrders && unsubscribeOrders();
+      unsubscribeReplies && unsubscribeReplies();
+      unsubscribeTasks && unsubscribeTasks();
+    };
   }, [user?.id]);
 
-  const handleViewCredentials = (order: Order) => {
-    if (order.username && order.password && order.url && order.expiryDate) {
+  const historyItems: HistoryItem[] = [
+    ...orders.map((order) => ({
+      ...order,
+      itemType: 'order' as const,
+      subtitle: `IPTV service • ID: ${order.id.slice(0, 8)}...`,
+    })),
+    ...taskSubmissions.map((submission) => ({
+      id: submission.id,
+      itemType: 'task' as const,
+      plan: ADMIN_APP_TASK_TITLE,
+      status: submission.approvalStatus,
+      username: submission.credentials?.username,
+      password: submission.credentials?.password,
+      url: undefined,
+      expiryDate: undefined,
+      rejectReason: submission.adminNotes || '',
+      finalPrice: 0,
+      createdAt: submission.createdAt,
+      isGuest: false,
+      subtitle: `Admin app task • Account: ${submission.details.accountEmail || 'No email'}`,
+    })),
+  ].sort((first, second) => {
+    const firstDate =
+      typeof first.createdAt === 'string'
+        ? new Date(first.createdAt).getTime()
+        : first.createdAt?.toDate?.()?.getTime?.() || 0;
+    const secondDate =
+      typeof second.createdAt === 'string'
+        ? new Date(second.createdAt).getTime()
+        : second.createdAt?.toDate?.()?.getTime?.() || 0;
+    return secondDate - firstDate;
+  });
+
+  const handleViewCredentials = (item: HistoryItem) => {
+    if (item.username && item.password) {
       setSelectedCredentials({
-        username: order.username,
-        password: order.password,
-        url: order.url,
-        expiryDate: order.expiryDate,
+        username: item.username,
+        password: item.password,
+        url: item.url || (item.itemType === 'task' ? 'Task credentials only' : undefined),
+        expiryDate:
+          item.expiryDate ||
+          (item.itemType === 'task'
+            ? new Date().toISOString()
+            : undefined),
       });
       setShowCredentials(true);
     }
@@ -196,12 +275,12 @@ export default function OrdersPage() {
                   <input
                     type="text"
                     title="Service streaming URL"
-                    value={selectedCredentials.url}
+                    value={selectedCredentials.url || ''}
                     readOnly
                     className="flex-1 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white text-sm break-all"
                   />
                   <button
-                    onClick={() => handleCopy(selectedCredentials.url, 'url')}
+                    onClick={() => handleCopy(selectedCredentials.url || '', 'url')}
                     className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors flex-shrink-0"
                     title="Copy URL"
                   >
@@ -216,12 +295,12 @@ export default function OrdersPage() {
                   Expiry Date
                 </label>
                 <div className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-mono">
-                  {new Date(selectedCredentials.expiryDate).toLocaleDateString()}
+                  {new Date(selectedCredentials.expiryDate || Date.now()).toLocaleDateString()}
                 </div>
               </div>
 
               <p className="text-xs text-slate-500 dark:text-slate-500 mt-4 text-center pt-4 border-t border-slate-200 dark:border-slate-700">
-                Keep your credentials safe. Don't share with others.
+                Keep your credentials safe. Don&apos;t share with others.
               </p>
             </CardContent>
           </Card>
@@ -261,7 +340,7 @@ export default function OrdersPage() {
       )}
 
       <div className="w-full">
-        <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16">
+        <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
           <div className="space-y-8">
             {/* Stats */}
             <div className="grid grid-cols-3 gap-3">
@@ -269,7 +348,7 @@ export default function OrdersPage() {
                 <CardContent className="pt-4 text-center">
               <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Active</p>
               <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                {orders.filter(
+                {historyItems.filter(
                   (o) =>
                     o.status === 'active' || o.status === 'approved'
                 ).length}
@@ -282,7 +361,7 @@ export default function OrdersPage() {
                 Pending
               </p>
               <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-                {orders.filter((o) => o.status === 'pending').length}
+                {historyItems.filter((o) => o.status === 'pending').length}
               </p>
             </CardContent>
           </Card>
@@ -292,7 +371,7 @@ export default function OrdersPage() {
                 Total
               </p>
               <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                {orders.length}
+                {historyItems.length}
               </p>
             </CardContent>
           </Card>
@@ -306,18 +385,16 @@ export default function OrdersPage() {
                 <p className="text-slate-600 dark:text-slate-400">Loading your orders...</p>
               </CardContent>
             </Card>
-          ) : orders.length === 0 ? (
+          ) : historyItems.length === 0 ? (
             <Card className="glass text-center py-12">
               <CardContent>
                 <p className="text-slate-600 dark:text-slate-400">
-                  No orders yet. Start by purchasing an IPTV plan!
+                  No orders or task results yet.
                 </p>
               </CardContent>
             </Card>
           ) : (
-            [...orders]
-              .reverse()
-              .map((order) => {
+            historyItems.map((order) => {
                 const orderDate =
                   order.createdAt?.toDate?.() ||
                   (typeof order.createdAt === 'string'
@@ -332,10 +409,21 @@ export default function OrdersPage() {
                     <CardContent className="pt-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <p className="font-bold text-slate-900 dark:text-white text-sm">
                               {order.plan}
                             </p>
+                            {order.itemType === 'task' && (
+                              <div className="px-2 py-1 rounded-full bg-cyan-100 dark:bg-cyan-900/30 text-xs font-semibold text-cyan-700 dark:text-cyan-300 inline-flex items-center gap-1">
+                                <Smartphone className="w-3.5 h-3.5" />
+                                Task
+                              </div>
+                            )}
+                            {order.isGuest && (
+                              <div className="px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-xs font-semibold text-blue-700 dark:text-blue-400">
+                                Guest Order
+                              </div>
+                            )}
                             <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-white dark:bg-slate-800 text-xs font-semibold">
                               {getStatusIcon(order.status)}
                               <span
@@ -360,6 +448,11 @@ export default function OrdersPage() {
                           <p className="text-sm text-slate-600 dark:text-slate-400 mb-2">
                             IPTV Service • ID: {order.id.slice(0, 8)}...
                           </p>
+                          {order.itemType === 'task' && (
+                            <p className="text-sm text-cyan-700 dark:text-cyan-300 mb-2">
+                              {order.subtitle}
+                            </p>
+                          )}
 
                           {/* Rejection Reason */}
                           {order.status === 'rejected' && order.rejectReason && (
@@ -401,9 +494,7 @@ export default function OrdersPage() {
                           {(order.status === 'active' ||
                             order.status === 'approved') &&
                             order.username &&
-                            order.password &&
-                            order.url &&
-                            order.expiryDate && (
+                            order.password && (
                               <Button
                                 onClick={() => handleViewCredentials(order)}
                                 size="sm"
@@ -431,6 +522,38 @@ export default function OrdersPage() {
               })
           )}
             </div>
+            {adminReplies.length > 0 && (
+              <div className="space-y-3 pt-2">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Admin Replies
+                </h2>
+                {adminReplies.map((reply) => (
+                  <Card
+                    key={reply.id}
+                    className="glass border border-blue-200 dark:border-blue-800/40"
+                  >
+                    <CardContent className="pt-4 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-semibold text-slate-900 dark:text-white">
+                          {reply.title}
+                        </p>
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                          {new Date(reply.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+                        {reply.message}
+                      </p>
+                      {reply.orderId && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Linked order: {reply.orderId.slice(0, 8)}...
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

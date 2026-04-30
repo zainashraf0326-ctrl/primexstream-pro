@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { getConfig, onConfigChange, ConfigData } from './firebase-service';
+import { getConfig, onConfigChange, ConfigData } from './supabase-service';
 
 interface ConfigContextType {
   config: ConfigData | null;
@@ -17,6 +17,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
     const initConfig = async () => {
       try {
         setLoading(true);
@@ -24,13 +26,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         setConfig(initialConfig);
         
         // Listen for real-time changes
-        const unsubscribe = onConfigChange((updatedConfig) => {
+        unsubscribe = onConfigChange((updatedConfig) => {
           setConfig(updatedConfig);
         });
-
-        return () => {
-          unsubscribe();
-        };
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error loading config');
         console.error('Error initializing config:', err);
@@ -40,6 +38,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     };
 
     initConfig();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, []);
 
   return (

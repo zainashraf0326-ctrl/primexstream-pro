@@ -7,12 +7,16 @@ import { SiBinance } from 'react-icons/si';
 import { GiMoneyStack } from 'react-icons/gi';
 import { CheckCircle2, Loader } from 'lucide-react';
 import { useApp } from '@/components/providers/app-provider';
+import { useGuestCheckout } from '@/components/providers/guest-checkout-context';
 import { AppLayout } from '@/components/app-layout';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { createOrder, uploadPaymentProof, getConfig, ConfigData } from '@/lib/firebase-service';
+import { createOrder } from '@/services/dbService';
+import { uploadProofImage } from '@/services/storageService';
+import { getConfig, ConfigData } from '@/lib/supabase-service';
 import DiscountModal from '@/components/modals/DiscountModal';
 import AccountDetails from '@/components/Payment/AccountDetails';
+import PostPaymentSignupModal from '@/components/modals/PostPaymentSignupModal';
 
 type PaymentMethod = 'remitly' | 'binance' | 'paypal' | 'cashapp' | 'zelle';
 
@@ -25,7 +29,7 @@ const trustBadges = [
 
 function PaymentContent() {
   const [showDiscountModal, setShowDiscountModal] = useState(false);
-  const [currentStep, setCurrentStep] = useState<1 | 2>(1);
+  const [currentStep, setCurrentStep] = useState<0 | 1 | 2>(0);
   const [method, setMethod] = useState<PaymentMethod | null>(null);
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [txId, setTxId] = useState('');
@@ -35,23 +39,41 @@ function PaymentContent() {
   const [receipt, setReceipt] = useState<{ orderId: string; transactionId: string } | null>(null);
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestName, setGuestName] = useState('');
+  const [showPostPaymentModal, setShowPostPaymentModal] = useState(false);
 
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isLoggedIn, isLoading, user } = useApp();
+  const { guestCheckout, setGuestCheckout } = useGuestCheckout();
 
   const planId = searchParams.get('plan') || '1month';
+  const hasValidConfigPlans =
+    Boolean(config?.plans?.plan1Month) &&
+    Boolean(config?.plans?.plan6Month) &&
+    Boolean(config?.plans?.plan12Month);
+  const configPlans = hasValidConfigPlans ? config!.plans : null;
+
   const plan =
-    !config
+    !configPlans
       ? null
       : planId === '6month'
-      ? config.plans.plan6Month
+      ? configPlans.plan6Month
       : planId === '12month'
-      ? config.plans.plan12Month
-      : config.plans.plan1Month;
+      ? configPlans.plan12Month
+      : configPlans.plan1Month;
 
-  const originalPrice = plan?.price || 20;
-  const salePrice = plan?.salePrice || 20;
+  const originalPriceFromQuery = Number(searchParams.get('originalPrice') || '');
+  const salePriceFromQuery = Number(searchParams.get('salePrice') || '');
+  const hasValidQueryPrices =
+    Number.isFinite(originalPriceFromQuery) &&
+    Number.isFinite(salePriceFromQuery) &&
+    originalPriceFromQuery > 0 &&
+    salePriceFromQuery > 0;
+
+  const originalPrice = plan?.price || (hasValidQueryPrices ? originalPriceFromQuery : 20);
+  const salePrice = plan?.salePrice || (hasValidQueryPrices ? salePriceFromQuery : 20);
   const isSpecialPayment = method === 'remitly' || method === 'binance';
   const extraDiscount = isSpecialPayment ? Math.round(salePrice * 0.3 * 100) / 100 : 0;
   const finalPrice = Math.max(0, salePrice - extraDiscount);
@@ -65,7 +87,13 @@ function PaymentContent() {
   ] as const;
 
   const getPaymentMethodDetails = (methodId: PaymentMethod) => {
-    if (!config) return { instructions: 'Loading...', accountInfo: [] as { name: string; value: string }[] };
+    if (!config?.paymentMethods) {
+      return {
+        instructions: 'Contact support for payment instructions',
+        accountInfo: [] as { name: string; value: string }[],
+      };
+    }
+
     const methodMap: Record<PaymentMethod, { instructions?: string; accountInfo?: string }> = {
       remitly: config.paymentMethods.remitly,
       binance: config.paymentMethods.binance,
@@ -80,15 +108,31 @@ function PaymentContent() {
     };
   };
 
+  // Initialize guest data from context if available
+  useEffect(() => {
+    if (guestCheckout) {
+      setGuestEmail(guestCheckout.email);
+      setGuestName(guestCheckout.name);
+      setCurrentStep(1);
+    }
+  }, [guestCheckout]);
+
   useEffect(() => {
     if (isLoading) return;
-    if (!isLoggedIn) router.push('/login');
-  }, [isLoggedIn, isLoading, router]);
+    // If user is logged in, proceed to payment method selection
+    if (isLoggedIn) {
+      setCurrentStep(1);
+    }
+  }, [isLoggedIn, isLoading]);
 
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const configData = await getConfig();
+        // Prevent blocking the payment UI if config request hangs.
+        const configData = await Promise.race<ConfigData | null>([
+          getConfig(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+        ]);
         setConfig(configData);
       } catch (err) {
         console.error('Error loading config:', err);
@@ -105,17 +149,56 @@ function PaymentContent() {
     return () => clearTimeout(timer);
   }, [isLoading, configLoading]);
 
+  const handleGuestContinue = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!guestEmail || !guestName) {
+      setError('Please enter both email and name');
+      return;
+    }
+    setError('');
+    setGuestCheckout({ email: guestEmail, name: guestName });
+    setCurrentStep(1);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      if (!user || !method || !screenshot || !txId) {
+      if (!method || !screenshot || !txId) {
         setError('Please complete all required fields.');
+        setLoading(false);
         return;
       }
-      const { path: proofPath, url: proofUrl } = await uploadPaymentProof(user.id, screenshot);
-      const order = await createOrder(user.id, {
+
+      // Determine if guest or logged-in user
+      const isGuest = !isLoggedIn;
+      const userId =
+        user?.id ||
+        (() => {
+          if (typeof window === 'undefined') {
+            return `guest_${Date.now()}`;
+          }
+
+          const existingGuestUid = window.localStorage.getItem(
+            'primex_guest_checkout_uid'
+          );
+          if (existingGuestUid) return existingGuestUid;
+
+          const nextGuestUid = `guest_${Date.now()}_${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+          window.localStorage.setItem('primex_guest_checkout_uid', nextGuestUid);
+          return nextGuestUid;
+        })();
+      const userName = user?.name || guestName;
+      const userEmail = user?.email || guestEmail;
+
+      const { path: proofPath, url: proofUrl } = await uploadProofImage(
+        userId,
+        screenshot
+      );
+      const orderData: any = {
         planId,
         plan: plan?.name || 'IPTV Plan',
         originalPrice,
@@ -127,10 +210,24 @@ function PaymentContent() {
         transactionId: txId,
         status: 'pending',
         date: new Date().toLocaleDateString(),
-        user: user.name,
-      });
+        user: userName,
+      };
+
+      // Add guest checkout markers
+      if (isGuest) {
+        orderData.isGuest = true;
+        orderData.guestEmail = userEmail;
+        orderData.guestName = userName;
+      }
+
+      const order = await createOrder(userId, orderData);
       setReceipt({ orderId: order.id || `ORD${Date.now()}`, transactionId: txId });
       setSuccess(true);
+
+      // Show post-payment signup modal if guest
+      if (isGuest) {
+        setShowPostPaymentModal(true);
+      }
     } catch (err: any) {
       setError(err.message || 'Error processing payment');
     } finally {
@@ -138,7 +235,7 @@ function PaymentContent() {
     }
   };
 
-  if (isLoading || configLoading) {
+  if (isLoading) {
     return (
       <AppLayout title="Payment">
         <div className="text-center py-12 text-slate-600 dark:text-slate-400">Loading payment options...</div>
@@ -148,6 +245,15 @@ function PaymentContent() {
 
   return (
     <AppLayout title="Payment">
+      <PostPaymentSignupModal 
+        isOpen={showPostPaymentModal} 
+        email={guestEmail}
+        name={guestName}
+        onClose={() => {
+          setShowPostPaymentModal(false);
+          router.push('/dashboard');
+        }}
+      />
       <DiscountModal isOpen={showDiscountModal} onContinue={() => setShowDiscountModal(false)} />
       <div className="w-full">
         <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16 space-y-6">
@@ -172,6 +278,11 @@ function PaymentContent() {
                 <h3 className="text-2xl font-bold text-emerald-600">Payment Submitted</h3>
                 <p className="text-slate-700 dark:text-slate-300">Order ID: {receipt.orderId}</p>
                 <p className="text-slate-700 dark:text-slate-300">Transaction ID: {receipt.transactionId}</p>
+                {!isLoggedIn && (
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    A confirmation has been sent to {guestEmail}
+                  </p>
+                )}
                 <Button onClick={() => router.push('/dashboard')} className="bg-emerald-600 hover:bg-emerald-700">
                   Go to Dashboard
                 </Button>
@@ -179,8 +290,53 @@ function PaymentContent() {
             </Card>
           ) : (
             <>
+              {currentStep === 0 && (
+                <div className="space-y-6">
+                  <Card className="glass">
+                    <CardTitle className="mb-3">Continue as Guest</CardTitle>
+                    <CardContent>
+                      <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
+                        Enter your email and name to continue with your purchase. You can create an account after payment.
+                      </p>
+                      <form onSubmit={handleGuestContinue} className="space-y-4">
+                        <input
+                          type="email"
+                          placeholder="Email address"
+                          value={guestEmail}
+                          onChange={(e) => setGuestEmail(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 dark:border-slate-600 p-3 bg-white dark:bg-slate-800"
+                          required
+                        />
+                        <input
+                          type="text"
+                          placeholder="Full name"
+                          value={guestName}
+                          onChange={(e) => setGuestName(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 dark:border-slate-600 p-3 bg-white dark:bg-slate-800"
+                          required
+                        />
+                        {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+                        <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700">
+                          Continue to Payment
+                        </Button>
+                      </form>
+                      {isLoggedIn && (
+                        <p className="text-sm text-slate-600 dark:text-slate-400 mt-4">
+                          Already logged in as {user?.name}? Continue below.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
               {currentStep === 1 && (
                 <div className="space-y-6">
+                  {configLoading && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                      Loading live payment instructions... You can continue with payment method selection.
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                     {paymentMethods.map((pm) => {
                       const Icon = pm.icon;
@@ -233,13 +389,20 @@ function PaymentContent() {
 
                   {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
-                  <Button
-                    onClick={() => (method ? setCurrentStep(2) : setError('Please select a payment method.'))}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700"
-                    disabled={!method}
-                  >
-                    Continue to Verification
-                  </Button>
+                  <div className="flex gap-3">
+                    {!isLoggedIn && (
+                      <Button type="button" variant="outline" onClick={() => setCurrentStep(0)} className="flex-1">
+                        Back to Guest Info
+                      </Button>
+                    )}
+                    <Button
+                      onClick={() => (method ? setCurrentStep(2) : setError('Please select a payment method.'))}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+                      disabled={!method}
+                    >
+                      Continue to Verification
+                    </Button>
+                  </div>
                 </div>
               )}
 

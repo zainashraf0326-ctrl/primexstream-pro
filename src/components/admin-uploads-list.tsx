@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getAllUploads } from '@/lib/uploadImage';
-import { deleteUpload } from '@/lib/firestore-service';
+import { deleteUpload } from '@/lib/supabase-user-service';
 import { Card, CardContent } from './ui/card';
 import { Download, Trash2, AlertCircle } from 'lucide-react';
 

@@ -23,7 +23,7 @@ interface Review {
   date: string;
 }
 
-// Default reviews in case Firestore is not configured
+// Default reviews in case Supabase is not configured
 const DEFAULT_REVIEWS = [
   {
     id: '1',
@@ -48,7 +48,7 @@ const DEFAULT_REVIEWS = [
   },
 ];
 
-// Default FAQs in case Firestore is not configured
+// Default FAQs in case Supabase is not configured
 const DEFAULT_FAQS = [
   {
     id: '1',
@@ -97,13 +97,6 @@ export default function SupportPage() {
   const [reviews, setReviews] = useState<Review[]>(DEFAULT_REVIEWS);
   const [faqs, setFAQs] = useState<FAQ[]>(DEFAULT_FAQS);
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    }
-  }, [isLoggedIn, isLoading, router]);
-
   const handleSubmitContact = () => {
     if (!contactForm.email || !contactForm.subject || !contactForm.message) {
       alert('Please fill in all fields');
@@ -120,7 +113,7 @@ export default function SupportPage() {
   return (
     <AppLayout title="Support">
       <div className="w-full">
-        <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16">
+        <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
           <div className="space-y-8">
         {/* Contact Options */}
         <div className="grid grid-cols-1 gap-4">

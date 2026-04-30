@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/admin-layout';
-import { getSettings, listenToSettings, updateSettings, Settings } from '@/lib/admin-firestore-service';
+import { getSettings, listenToSettings, updateSettings, Settings } from '@/lib/admin-supabase-service';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Plus, Trash2, Save, X } from 'lucide-react';

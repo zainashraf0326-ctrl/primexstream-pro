@@ -15,7 +15,7 @@ import {
   updateAdminContent,
   ConfigData,
   AdminContent,
-} from '@/lib/firebase-service';
+} from '@/lib/supabase-service';
 import { Settings, Save, AlertCircle, CheckCircle, DollarSign, Phone, BookOpen } from 'lucide-react';
 
 export default function AdminEditorPage() {

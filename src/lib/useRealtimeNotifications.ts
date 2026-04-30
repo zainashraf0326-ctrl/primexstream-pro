@@ -1,7 +1,7 @@
 /**
  * REAL-TIME NOTIFICATIONS HOOK
  * 
- * Uses Firestore listener to load and update notifications
+ * Uses Supabase listener to load and update notifications
  * No local state manipulation
  * Persists across page refreshes
  */
@@ -9,7 +9,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { NotificationData, listenToNotifications } from '@/lib/firestore-notifications';
+import { NotificationData, listenToNotifications } from '@/lib/supabase-notifications';
 
 export function useRealtimeNotifications(userId: string | undefined) {
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
@@ -26,10 +26,10 @@ export function useRealtimeNotifications(userId: string | undefined) {
 
     setLoading(true);
 
-    // Set up real-time listener to Firestore
+    // Set up real-time listener to Supabase
     // This returns an unsubscribe function
     const unsubscribe = listenToNotifications(userId, (notifs) => {
-      // Notifications come from Firestore in real-time
+      // Notifications come from Supabase in real-time
       setNotifications(notifs);
       setLoading(false);
 

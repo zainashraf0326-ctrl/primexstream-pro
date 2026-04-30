@@ -4,7 +4,7 @@ import { useState } from 'react';
 import AdminLayout from '@/components/admin-layout';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { seedFirebaseData } from '@/lib/firebase-seed-data';
+import { seedSupabaseData } from '@/lib/supabase-seed-data';
 
 export default function InitializeAdmin() {
   const [loading, setLoading] = useState(false);
@@ -18,10 +18,10 @@ export default function InitializeAdmin() {
     setSuccess(false);
 
     try {
-      await seedFirebaseData();
+      await seedSupabaseData();
       setSuccess(true);
       setInitialized(true);
-      console.log('✅ Firebase initialized successfully');
+      console.log('✅ Supabase initialized successfully');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error occurred';
       setError(message);
@@ -35,9 +35,9 @@ export default function InitializeAdmin() {
     <AdminLayout>
       <div className="max-w-2xl">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Firebase Initialization</h1>
+          <h1 className="text-3xl font-bold mb-2">Supabase Initialization</h1>
           <p className="text-gray-600 dark:text-gray-400">
-            Populate Firebase with seed data for plans, payment methods, referral tiers, FAQs, and more.
+            Populate Supabase with seed data for plans, payment methods, referral tiers, FAQs, and more.
           </p>
         </div>
 
@@ -46,7 +46,7 @@ export default function InitializeAdmin() {
             <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
               <h2 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">⚠️ Warning</h2>
               <p className="text-sm text-blue-800 dark:text-blue-200">
-                This will initialize 8 collections in Firebase with seed data:
+                This will initialize 8 collections in Supabase with seed data:
               </p>
               <ul className="list-disc list-inside mt-2 text-sm text-blue-800 dark:text-blue-200 space-y-1">
                 <li>Plans (IPTV packages)</li>
@@ -97,7 +97,7 @@ export default function InitializeAdmin() {
                 disabled={loading || initialized}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-semibold transition disabled:opacity-50"
               >
-                {loading ? '⏳ Initializing...' : initialized ? '✅ Initialized' : '🚀 Initialize Firebase'}
+                {loading ? '⏳ Initializing...' : initialized ? '✅ Initialized' : '🚀 Initialize Supabase'}
               </Button>
               {initialized && (
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-3 text-center">
@@ -114,7 +114,7 @@ export default function InitializeAdmin() {
           <ol className="space-y-3 text-sm">
             <li className="flex gap-3">
               <span className="font-bold text-blue-600 min-w-fit">1.</span>
-              <span>Click the button above to initialize Firebase collections</span>
+              <span>Click the button above to initialize Supabase collections</span>
             </li>
             <li className="flex gap-3">
               <span className="font-bold text-blue-600 min-w-fit">2.</span>
@@ -122,7 +122,7 @@ export default function InitializeAdmin() {
             </li>
             <li className="flex gap-3">
               <span className="font-bold text-blue-600 min-w-fit">3.</span>
-              <span>Update website pages to read from Firebase instead of hardcoded data</span>
+              <span>Update website pages to read from Supabase instead of hardcoded data</span>
             </li>
             <li className="flex gap-3">
               <span className="font-bold text-blue-600 min-w-fit">4.</span>

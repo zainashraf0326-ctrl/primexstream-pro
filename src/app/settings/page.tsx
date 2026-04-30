@@ -9,7 +9,10 @@ import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { User, LogOut, Lock, Shield, Mail, CreditCard, AlertCircle, CheckCircle } from 'lucide-react';
-import { getAuth, updatePassword, reauthenticateWithCredential, EmailAuthProvider, signOut } from 'firebase/auth';
+import {
+  changeCurrentUserPassword,
+  getAuthErrorMessage,
+} from '@/services/authService';
 
 export default function SettingsPage() {
   const { isLoggedIn, user, logout, isLoading } = useApp();
@@ -24,13 +27,6 @@ export default function SettingsPage() {
   });
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    }
-  }, [isLoggedIn, isLoading, router]);
 
   const handleLogout = () => {
     logout();
@@ -56,23 +52,15 @@ export default function SettingsPage() {
 
     setPasswordLoading(true);
     try {
-      const auth = getAuth();
-      const currentUser = auth.currentUser;
-
-      if (!currentUser || !currentUser.email) {
+      if (!user?.email) {
         throw new Error('No authenticated user found');
       }
 
-      // Re-authenticate with current password
-      const credential = EmailAuthProvider.credential(
-        currentUser.email,
-        passwordForm.currentPassword
-      );
-
-      await reauthenticateWithCredential(currentUser, credential);
-
-      // Update password
-      await updatePassword(currentUser, passwordForm.newPassword);
+      await changeCurrentUserPassword({
+        email: user.email,
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      });
 
       setPasswordMessage({ type: 'success', text: 'Password changed successfully!' });
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -83,9 +71,10 @@ export default function SettingsPage() {
         router.push('/login');
       }, 2000);
     } catch (error: any) {
-      const errorMessage = error.code === 'auth/wrong-password' 
-        ? 'Current password is incorrect' 
-        : error.message || 'Failed to change password';
+      const errorMessage =
+        error?.code === 'auth/invalid-credential'
+          ? 'Current password is incorrect'
+          : getAuthErrorMessage(error, 'Failed to change password');
       setPasswordMessage({ type: 'error', text: errorMessage });
     } finally {
       setPasswordLoading(false);
@@ -97,7 +86,7 @@ export default function SettingsPage() {
   return (
     <AppLayout title="Settings">
       <div className="w-full">
-        <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16">
+        <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
           <div className="space-y-8">
         {/* Profile Section */}
         <div>

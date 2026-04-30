@@ -19,11 +19,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  collection,
-  getDocs,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase-config';
+import { supabase } from '@/lib/supabase-config';
 
 interface AdminStats {
   totalUsers: number;
@@ -61,47 +57,38 @@ export default function AdminStatsPage() {
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const safeGetCollection = async (collectionName: string) => {
-        try {
-          return await getDocs(collection(db, collectionName));
-        } catch (error: any) {
-          if (error?.code === 'permission-denied') {
-            console.warn(`Permission denied for ${collectionName}`);
-            return null;
-          }
-          throw error;
-        }
-      };
-
-      const [usersSnap, ordersSnap, referralsSnap, submissionsSnap, notificationsSnap] = await Promise.all([
-        safeGetCollection('users'),
-        safeGetCollection('orders'),
-        safeGetCollection('referrals'),
-        safeGetCollection('socialTaskSubmissions'),
-        safeGetCollection('notifications'),
+      const [usersRes, ordersRes, referralsRes, submissionsRes, notificationsRes] = await Promise.all([
+        supabase.from('users').select('*'),
+        supabase.from('orders').select('*'),
+        supabase.from('referrals').select('*'),
+        supabase.from('social_task_submissions').select('*'),
+        supabase.from('notifications').select('*'),
       ]);
 
-      const totalUsers = usersSnap?.size || 0;
-      const totalOrders = ordersSnap?.size || 0;
+      const users = usersRes.data || [];
+      const orders = ordersRes.data || [];
+      const referrals = referralsRes.data || [];
+      const submissions = submissionsRes.data || [];
+      const notifications = notificationsRes.data || [];
+
+      const totalUsers = users.length;
+      const totalOrders = orders.length;
       const totalRevenue =
-        ordersSnap?.docs.reduce((sum, snapshotDoc) => {
-          const data = snapshotDoc.data() as any;
+        orders.reduce((sum, data: any) => {
           const normalizedStatus = (data.status || '').toString().toLowerCase();
           if (normalizedStatus !== 'approved') return sum;
-          return sum + Number(data.amount || data.finalPrice || 0);
-        }, 0) || 0;
+          return sum + Number(data.amount || data.final_price || 0);
+        }, 0);
 
-      const totalReferrals = referralsSnap?.size || 0;
+      const totalReferrals = referrals.length;
       const purchasedReferrals =
-        referralsSnap?.docs.filter((snapshotDoc) => snapshotDoc.data().purchasedPlan === true).length || 0;
+        referrals.filter((referral: any) => referral.purchased_plan === true).length;
 
-      const socialSubmissions = submissionsSnap?.size || 0;
+      const socialSubmissions = submissions.length;
       const approvedSubmissions =
-        submissionsSnap?.docs.filter(
-          (snapshotDoc) => (snapshotDoc.data().approvalStatus || '').toLowerCase() === 'approved'
-        ).length || 0;
+        submissions.filter((submission: any) => (submission.approval_status || '').toLowerCase() === 'approved').length;
 
-      const adminNotifications = notificationsSnap?.size || 0;
+      const adminNotifications = notifications.length;
 
       // All orders for admin (no filter)
       const adminOrders = totalOrders;
@@ -432,7 +419,7 @@ export default function AdminStatsPage() {
             <li>• Track your personal orders, notifications, and referrals</li>
             <li>• Monitor social task submissions and approval rates</li>
             <li>
-              • Click &quot;Refresh&quot; button to reload the latest data from Firebase
+              • Click &quot;Refresh&quot; button to reload the latest data from Supabase
             </li>
             <li>
               • Use the Debug panel (/admin/debug) to test system functionality

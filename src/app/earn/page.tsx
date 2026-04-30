@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useApp } from '@/components/providers/app-provider';
+import { supabase } from '@/lib/supabase-config';
 import { AppLayout } from '@/components/app-layout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,26 +28,33 @@ import {
   AlertCircle,
   FileUp,
   X as XIcon,
+  ChevronDown,
+  ChevronUp,
+  Smartphone,
+  Users2,
 } from 'lucide-react';
 import { useRealtimeReferrals } from '@/lib/useRealtimeReferrals';
-import { claimReferralReward } from '@/lib/firestore-referral-service';
-import { applyReferralCode } from '@/lib/firestore-referral-service';
-import { getSocialMediaLinks } from '@/lib/firebase-service';
+import { claimReferralReward } from '@/lib/supabase-referral-service';
+import { applyReferralCode } from '@/lib/supabase-referral-service';
+import { getSocialMediaLinks } from '@/lib/supabase-service';
+import { ReferralTreeModal } from '@/components/referral-tree-modal';
+import { EarnBreakdownModal } from '@/components/earn-breakdown-modal';
+import { AdminAppTaskCard } from '@/components/earn/admin-app-task-card';
+import { TaskRow } from '@/components/earn/task-row';
 
 /**
  * REAL PRODUCTION EARN PAGE
  * 
- * Uses real-time Firestore listeners:
+ * Uses real-time Supabase listeners:
  * - Referral status updates instantly
  * - Claim button appears when purchasedPlan = true
  * - Claimed state shown when rewardClaimed = true
  */
 export default function EarnPage() {
-  const { user, isLoggedIn, isLoading } = useApp();
-  const router = useRouter();
+  const { user, isLoading } = useApp();
 
-  // Real-time referrals from Firestore
-  const { referrals, stats, loading } = useRealtimeReferrals(user?.id);
+  // Real-time referrals from Supabase
+  const { referrals, stats, loading } = useRealtimeReferrals(user?.id || '');
 
   // Local state
   const [copied, setCopied] = useState<string | null>(null);
@@ -58,8 +65,6 @@ export default function EarnPage() {
   const [codeMessage, setCodeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [socialLinks, setSocialLinks] = useState<any>(null);
   const [referralLink, setReferralLink] = useState('');
-
-  // Social Media Task states
   const [socialTaskForms, setSocialTaskForms] = useState<{
     [key: string]: { id: string; username: string; proof: File | null }
   }>({
@@ -74,18 +79,26 @@ export default function EarnPage() {
   const [submittingSocialTask, setSubmittingSocialTask] = useState(false);
   const [socialTaskMessage, setSocialTaskMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [socialTaskSubmitted, setSocialTaskSubmitted] = useState(false);
+  const [socialTasksExpanded, setSocialTasksExpanded] = useState(false);
+  const [activeReferralFilter, setActiveReferralFilter] = useState<'total' | 'joined' | 'purchased' | 'earned'>('total');
+  const [showReferralTree, setShowReferralTree] = useState(false);
+  const [showEarnBreakdown, setShowEarnBreakdown] = useState(false);
+  const [remindingUser, setRemindingUser] = useState<string | null>(null);
 
-  // Authentication check
+  const filteredReferrals = referrals.filter((referral) => {
+    if (activeReferralFilter === 'joined') return !referral.purchasedPlan;
+    if (activeReferralFilter === 'purchased') return referral.purchasedPlan;
+    if (activeReferralFilter === 'earned') return referral.rewardClaimed;
+    return true;
+  });
+
+  // Generate referral link
   useEffect(() => {
-    if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    } else if (referralCode) {
-      // Generate referral link with code as query parameter
+    if (referralCode) {
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
       setReferralLink(`${baseUrl}/login?refCode=${referralCode}`);
     }
-  }, [isLoggedIn, isLoading, router, referralCode]);
+  }, [referralCode]);
 
   // Fetch social media links
   useEffect(() => {
@@ -127,6 +140,36 @@ export default function EarnPage() {
     }
   };
 
+  // Send reminder to referral user
+  const handleSendReminder = async (referralId: string, referralName: string, referralEmail?: string) => {
+    if (!user?.id) return;
+
+    setRemindingUser(referralId);
+    try {
+      // Send notification to referral user
+      const message = `Your referrer ${user.name || 'A user'} is reminding you: Use $5 to buy a subscription and they'll make a reward!`;
+      
+      // Store notification in Supabase
+      const { error } = await supabase.from('notifications').insert({
+        user_id: referralId,
+        referrer_id: user.id,
+        type: 'referral_reminder',
+        message: message,
+        read: false,
+        created_at: new Date().toISOString(),
+      });
+
+      if (error) throw error;
+
+      // Show success message
+      console.log('✅ Reminder sent to', referralName);
+    } catch (error) {
+      console.error('Error sending reminder:', error);
+    } finally {
+      setRemindingUser(null);
+    }
+  };
+
   // Apply referral code
   const handleApplyReferralCode = async () => {
     if (!user?.id) {
@@ -150,7 +193,6 @@ export default function EarnPage() {
     setApplyingCode(false);
   };
 
-  // Get social media link for opening in new tab
   const getSocialMediaLink = (platform: string): string => {
     const links: { [key: string]: string } = {
       youtube: socialLinks?.youtube || 'https://www.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw',
@@ -160,12 +202,15 @@ export default function EarnPage() {
       x: socialLinks?.x || 'https://x.com/home',
       telegram: socialLinks?.telegram || 'https://t.me',
     };
-    
+
     return links[platform];
   };
 
-  // Handle social media form input
-  const handleSocialFormChange = (platform: string, field: 'username' | 'proof', value: any) => {
+  const handleSocialFormChange = (
+    platform: string,
+    field: 'username' | 'proof',
+    value: any
+  ) => {
     setSocialTaskForms((prev) => ({
       ...prev,
       [platform]: {
@@ -175,112 +220,40 @@ export default function EarnPage() {
     }));
   };
 
-  // Handle platform selection
   const togglePlatformSelection = (platform: string) => {
     setSelectedPlatforms((prev) =>
-      prev.includes(platform) 
-        ? prev.filter((p) => p !== platform)
+      prev.includes(platform)
+        ? prev.filter((entry) => entry !== platform)
         : [...prev, platform]
     );
   };
 
-  // Open social media link in new tab
   const handleOpenSocialMedia = (e: React.MouseEvent, platform: string) => {
     e.stopPropagation();
     const link = getSocialMediaLink(platform);
-    // Always open the link and toggle, even if socialLinks failed to load
     if (link) {
       window.open(link, '_blank');
-      // Toggle to show form after clicking
       setTimeout(() => {
         togglePlatformSelection(platform);
       }, 100);
     }
   };
 
-  // Submit social media task
   const handleSubmitSocialTask = async () => {
-    if (!user?.id) {
-      setSocialTaskMessage({ type: 'error', text: 'Please login first' });
-      return;
-    }
-
-    // Check minimum platforms selected
-    if (selectedPlatforms.length < 3) {
-      setSocialTaskMessage({ type: 'error', text: 'Please select at least 3 platforms' });
-      return;
-    }
-
-    // Check that all selected platforms have username and proof
-    for (const platform of selectedPlatforms) {
-      const form = socialTaskForms[platform];
-      if (!form.username.trim()) {
-        setSocialTaskMessage({ type: 'error', text: `Please enter ${platform} username` });
-        return;
-      }
-      if (!form.proof) {
-        setSocialTaskMessage({ type: 'error', text: `Please upload proof for ${platform}` });
-        return;
-      }
-    }
-
     setSubmittingSocialTask(true);
-    setSocialTaskMessage(null);
-
-    try {
-      // Prepare submission data
-      const submissionData = {
-        userId: user.id,
-        userName: user.name || 'Unknown',
-        userEmail: user.email || 'No email',
-        platforms: selectedPlatforms.map((platform) => ({
-          platform,
-          username: socialTaskForms[platform].username,
-          proofFileName: `${user.id}_${platform}_${Date.now()}.file`,
-        })),
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        approvalStatus: 'pending',
-        adminNotes: '',
-        reward: null,
-      };
-
-      // Save to Firestore (we'll use a collection called socialTaskSubmissions)
-      // For now, we'll just show success message - actual implementation needs Firebase setup
-      console.log('Social Task Submission:', submissionData);
-
-      // TODO: Upload to Firestore
-      const { collection, addDoc } = await import('firebase/firestore');
-      const { db } = await import('@/lib/firebase-config');
-
-      await addDoc(collection(db, 'socialTaskSubmissions'), submissionData);
-
-      setSocialTaskMessage({ 
-        type: 'success', 
-        text: '✅ Social task submitted! Admin will review your proof and approve within 24-48 hours.' 
-      });
-      setSocialTaskSubmitted(true);
-
-      // Reset form
-      setTimeout(() => {
-        setSocialTaskForms({
-          youtube: { id: 'youtube', username: '', proof: null },
-          instagram: { id: 'instagram', username: '', proof: null },
-          tiktok: { id: 'tiktok', username: '', proof: null },
-          facebook: { id: 'facebook', username: '', proof: null },
-          x: { id: 'x', username: '', proof: null },
-          telegram: { id: 'telegram', username: '', proof: null },
-        });
-        setSelectedPlatforms([]);
-      }, 2000);
-    } catch (error) {
-      console.error('Error submitting social task:', error);
-      setSocialTaskMessage({ type: 'error', text: 'Failed to submit. Please try again.' });
-    } finally {
-      setSubmittingSocialTask(false);
-    }
+    setSocialTaskMessage({
+      type: 'error',
+      text: 'The old social task flow has been replaced by the new admin app task.',
+    });
+    setSubmittingSocialTask(false);
   };
 
+  /*
+
+        text: '✅ Social task submitted! Admin will review your proof and approve within 24-48 hours.' 
+      });
+ 
+  */
   if (isLoading || loading) {
     return (
       <AppLayout>
@@ -312,32 +285,52 @@ export default function EarnPage() {
           <div className="flex-1 space-y-8">
             {/* Stats Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Card className="p-4 text-center glass glass-light dark:glass">
+              {/* Total Referrals - Opens Tree Modal */}
+              <Card
+                className="p-4 text-center glass glass-light dark:glass cursor-pointer transition-all hover:ring-2 hover:ring-emerald-500/70 hover:bg-emerald-50/60 dark:hover:bg-emerald-900/20"
+                onClick={() => setShowReferralTree(true)}
+              >
                 <div className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">
                   {stats.total}
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Total Referrals</p>
+                <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">Click to view tree</p>
               </Card>
 
-              <Card className="p-4 text-center glass glass-light dark:glass">
+              {/* Just Joined - Shows Reminder Button */}
+              <Card
+                className="p-4 text-center glass glass-light dark:glass cursor-pointer transition-all hover:ring-2 hover:ring-blue-500/70 hover:bg-blue-50/60 dark:hover:bg-blue-900/20"
+                onClick={() => setActiveReferralFilter('joined')}
+              >
                 <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
                   {stats.joined}
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Just Joined</p>
+                <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">Click to remind</p>
               </Card>
 
-              <Card className="p-4 text-center glass glass-light dark:glass">
+              {/* Purchased - Shows Claim Button */}
+              <Card
+                className="p-4 text-center glass glass-light dark:glass cursor-pointer transition-all hover:ring-2 hover:ring-orange-500/70 hover:bg-orange-50/60 dark:hover:bg-orange-900/20"
+                onClick={() => setActiveReferralFilter('purchased')}
+              >
                 <div className="text-3xl font-bold text-orange-600 dark:text-orange-400">
                   {stats.purchased}
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Purchased</p>
+                <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">Click to claim</p>
               </Card>
 
-              <Card className="p-4 text-center glass glass-light dark:glass">
+              {/* Earned - Opens Breakdown Modal */}
+              <Card
+                className="p-4 text-center glass glass-light dark:glass cursor-pointer transition-all hover:ring-2 hover:ring-green-500/70 hover:bg-green-50/60 dark:hover:bg-green-900/20"
+                onClick={() => setShowEarnBreakdown(true)}
+              >
                 <div className="text-3xl font-bold text-green-600 dark:text-green-400">
                   ₹{stats.totalEarnings}
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Earned</p>
+                <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">Click for details</p>
               </Card>
             </div>
 
@@ -522,27 +515,35 @@ export default function EarnPage() {
                 )}
               </div>
             </Card>
-            
-            {/* Social Media Task Card */}
-            {!socialTaskSubmitted && (
-              <Card className="p-6 glass glass-light dark:glass animate-fade-in-up bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-200 dark:border-purple-800">
-                <div className="space-y-6">
-                  {/* Header */}
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-purple-600 text-white flex items-center justify-center flex-shrink-0">
-                      <CheckCircle2 className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                        Social Media Task
-                      </h3>
-                      <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                        Follow us on social media & get <span className="font-bold text-purple-600 dark:text-purple-400">1 month free</span> + <span className="font-bold text-purple-600 dark:text-purple-400">₹20 wallet credit</span>
-                      </p>
-                    </div>
-                  </div>
 
-                  {/* Instructions */}
+            {/* Tasks Section */}
+            <div className="space-y-4">
+              <h2 className="text-2xl font-bold text-slate-900 dark:text-white px-2">Available Tasks</h2>
+
+              {/* Task 1: App Installer */}
+              <TaskRow
+                title="Install Our Mobile App"
+                description="Download and install the PrimexStream Pro app on your mobile device"
+                icon={<Smartphone className="w-6 h-6" />}
+                status="available"
+                reward="5 Free Days + ₹50 Wallet Credit"
+              >
+                <AdminAppTaskCard
+                  userId={user?.id}
+                  userName={user?.name}
+                  userEmail={user?.email}
+                />
+              </TaskRow>
+
+              {/* Task 2: Social Media Followers */}
+              <TaskRow
+                title="Follow us on Social Media"
+                description="Follow PrimexStream Pro on social media platforms and earn rewards"
+                icon={<Users2 className="w-6 h-6" />}
+                status="available"
+                reward="1 Month Free + ₹20 Wallet Credit"
+              >
+                <div className="space-y-6">
                   <div className="bg-white/50 dark:bg-slate-800/50 rounded-lg p-4 text-sm">
                     <p className="font-semibold text-slate-900 dark:text-white mb-2">How it works:</p>
                     <ul className="space-y-1 text-slate-600 dark:text-slate-400 text-xs">
@@ -664,7 +665,7 @@ export default function EarnPage() {
                                   />
                                   <label htmlFor="youtube-proof" className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-red-300 rounded cursor-pointer hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-xs">
                                     <FileUp className="w-4 h-4 text-red-600" />
-                                    {socialTaskForms.youtube.proof ? socialTaskForms.youtube.proof.name : 'Choose image'}
+                                    {socialTaskForms.youtube.proof?.name || 'Choose image'}
                                   </label>
                                 </div>
                               </div>
@@ -673,17 +674,27 @@ export default function EarnPage() {
 
                           {/* Cancel Button */}
                           {selectedPlatforms.includes('youtube') && (
-                            <Button
-                              onClick={() => {
-                                togglePlatformSelection('youtube');
-                                handleSocialFormChange('youtube', 'username', '');
-                                handleSocialFormChange('youtube', 'proof', null);
-                              }}
-                              variant="outline"
-                              className="w-full text-xs mt-2"
-                            >
-                              Start Over
-                            </Button>
+                            socialTaskForms.youtube.username && socialTaskForms.youtube.proof ? (
+                              <Button
+                                onClick={handleSubmitSocialTask}
+                                disabled={submittingSocialTask}
+                                className="w-full text-xs mt-2 bg-emerald-600 hover:bg-emerald-700 text-white claim-button-glow"
+                              >
+                                Submit
+                              </Button>
+                            ) : (
+                              <Button
+                                onClick={() => {
+                                  togglePlatformSelection('youtube');
+                                  handleSocialFormChange('youtube', 'username', '');
+                                  handleSocialFormChange('youtube', 'proof', null);
+                                }}
+                                variant="outline"
+                                className="w-full text-xs mt-2"
+                              >
+                                Start Over
+                              </Button>
+                            )
                           )}
                         </div>
                       </div>
@@ -739,16 +750,24 @@ export default function EarnPage() {
                                 />
                                 <label htmlFor="instagram-proof" className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-pink-300 rounded cursor-pointer hover:bg-pink-50 dark:hover:bg-pink-900/20 transition-colors text-xs">
                                   <FileUp className="w-4 h-4 text-pink-600" />
-                                  {socialTaskForms.instagram.proof ? socialTaskForms.instagram.proof.name : 'Choose image'}
+                                  {socialTaskForms.instagram.proof?.name || 'Choose image'}
                                 </label>
                               </div>
                             </div>
                             <Button
-                              onClick={() => togglePlatformSelection('instagram')}
+                              onClick={
+                                socialTaskForms.instagram.username && socialTaskForms.instagram.proof
+                                  ? handleSubmitSocialTask
+                                  : () => togglePlatformSelection('instagram')
+                              }
                               variant="outline"
-                              className="w-full text-xs"
+                              className={`w-full text-xs ${
+                                socialTaskForms.instagram.username && socialTaskForms.instagram.proof
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white claim-button-glow border-emerald-600'
+                                  : ''
+                              }`}
                             >
-                              Cancel
+                              {socialTaskForms.instagram.username && socialTaskForms.instagram.proof ? 'Submit' : 'Start Over'}
                             </Button>
                           </div>
                         )}
@@ -805,16 +824,24 @@ export default function EarnPage() {
                                 />
                                 <label htmlFor="tiktok-proof" className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-slate-300 rounded cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-xs">
                                   <FileUp className="w-4 h-4 text-slate-600" />
-                                  {socialTaskForms.tiktok.proof ? socialTaskForms.tiktok.proof.name : 'Choose image'}
+                                  {socialTaskForms.tiktok.proof?.name || 'Choose image'}
                                 </label>
                               </div>
                             </div>
                             <Button
-                              onClick={() => togglePlatformSelection('tiktok')}
+                              onClick={
+                                socialTaskForms.tiktok.username && socialTaskForms.tiktok.proof
+                                  ? handleSubmitSocialTask
+                                  : () => togglePlatformSelection('tiktok')
+                              }
                               variant="outline"
-                              className="w-full text-xs"
+                              className={`w-full text-xs ${
+                                socialTaskForms.tiktok.username && socialTaskForms.tiktok.proof
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white claim-button-glow border-emerald-600'
+                                  : ''
+                              }`}
                             >
-                              Cancel
+                              {socialTaskForms.tiktok.username && socialTaskForms.tiktok.proof ? 'Submit' : 'Start Over'}
                             </Button>
                           </div>
                         )}
@@ -871,16 +898,24 @@ export default function EarnPage() {
                                 />
                                 <label htmlFor="facebook-proof" className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-blue-300 rounded cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-xs">
                                   <FileUp className="w-4 h-4 text-blue-600" />
-                                  {socialTaskForms.facebook.proof ? socialTaskForms.facebook.proof.name : 'Choose image'}
+                                  {socialTaskForms.facebook.proof?.name || 'Choose image'}
                                 </label>
                               </div>
                             </div>
                             <Button
-                              onClick={() => togglePlatformSelection('facebook')}
+                              onClick={
+                                socialTaskForms.facebook.username && socialTaskForms.facebook.proof
+                                  ? handleSubmitSocialTask
+                                  : () => togglePlatformSelection('facebook')
+                              }
                               variant="outline"
-                              className="w-full text-xs"
+                              className={`w-full text-xs ${
+                                socialTaskForms.facebook.username && socialTaskForms.facebook.proof
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white claim-button-glow border-emerald-600'
+                                  : ''
+                              }`}
                             >
-                              Cancel
+                              {socialTaskForms.facebook.username && socialTaskForms.facebook.proof ? 'Submit' : 'Start Over'}
                             </Button>
                           </div>
                         )}
@@ -937,16 +972,24 @@ export default function EarnPage() {
                                 />
                                 <label htmlFor="x-proof" className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-sky-300 rounded cursor-pointer hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-colors text-xs">
                                   <FileUp className="w-4 h-4 text-sky-600" />
-                                  {socialTaskForms.x.proof ? socialTaskForms.x.proof.name : 'Choose image'}
+                                  {socialTaskForms.x.proof?.name || 'Choose image'}
                                 </label>
                               </div>
                             </div>
                             <Button
-                              onClick={() => togglePlatformSelection('x')}
+                              onClick={
+                                socialTaskForms.x.username && socialTaskForms.x.proof
+                                  ? handleSubmitSocialTask
+                                  : () => togglePlatformSelection('x')
+                              }
                               variant="outline"
-                              className="w-full text-xs"
+                              className={`w-full text-xs ${
+                                socialTaskForms.x.username && socialTaskForms.x.proof
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white claim-button-glow border-emerald-600'
+                                  : ''
+                              }`}
                             >
-                              Cancel
+                              {socialTaskForms.x.username && socialTaskForms.x.proof ? 'Submit' : 'Start Over'}
                             </Button>
                           </div>
                         )}
@@ -1003,16 +1046,24 @@ export default function EarnPage() {
                                 />
                                 <label htmlFor="telegram-proof" className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-cyan-300 rounded cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-900/20 transition-colors text-xs">
                                   <FileUp className="w-4 h-4 text-cyan-600" />
-                                  {socialTaskForms.telegram.proof ? socialTaskForms.telegram.proof.name : 'Choose image'}
+                                  {socialTaskForms.telegram.proof?.name || 'Choose image'}
                                 </label>
                               </div>
                             </div>
                             <Button
-                              onClick={() => togglePlatformSelection('telegram')}
+                              onClick={
+                                socialTaskForms.telegram.username && socialTaskForms.telegram.proof
+                                  ? handleSubmitSocialTask
+                                  : () => togglePlatformSelection('telegram')
+                              }
                               variant="outline"
-                              className="w-full text-xs"
+                              className={`w-full text-xs ${
+                                socialTaskForms.telegram.username && socialTaskForms.telegram.proof
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white claim-button-glow border-emerald-600'
+                                  : ''
+                              }`}
                             >
-                              Cancel
+                              {socialTaskForms.telegram.username && socialTaskForms.telegram.proof ? 'Submit' : 'Start Over'}
                             </Button>
                           </div>
                         )}
@@ -1024,17 +1075,17 @@ export default function EarnPage() {
                   {socialTaskMessage && (
                     <div
                       className={`p-3 rounded-lg text-sm font-medium flex items-start gap-2 ${
-                        socialTaskMessage.type === 'success'
+                        socialTaskMessage?.type === 'success'
                           ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
                           : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                       }`}
                     >
-                      {socialTaskMessage.type === 'success' ? (
+                      {socialTaskMessage?.type === 'success' ? (
                         <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
                       ) : (
                         <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                       )}
-                      <span>{socialTaskMessage.text}</span>
+                      <span>{socialTaskMessage?.text}</span>
                     </div>
                   )}
 
@@ -1061,12 +1112,29 @@ export default function EarnPage() {
                       )}
                     </Button>
                   </div>
+
+                  {socialTaskMessage && (
+                    <div
+                      className={`p-3 rounded-lg text-sm font-medium flex items-start gap-2 ${
+                        socialTaskMessage?.type === 'success'
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                          : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                      }`}
+                    >
+                      {socialTaskMessage?.type === 'success' ? (
+                        <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                      )}
+                      <span>{socialTaskMessage?.text}</span>
+                    </div>
+                  )}
                 </div>
-              </Card>
-            )}
+              </TaskRow>
+            </div>
 
             {/* Social Task Submitted Message */}
-            {socialTaskSubmitted && (
+            {false && socialTaskSubmitted && (
               <Card className="p-6 glass glass-light dark:glass bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border border-green-200 dark:border-green-800 animate-fade-in-up">
                 <div className="text-center space-y-4">
                   <div className="w-12 h-12 rounded-full bg-green-600 text-white flex items-center justify-center mx-auto">
@@ -1091,31 +1159,28 @@ export default function EarnPage() {
               </Card>
             )}
 
-            {/* Referrals List */}
-            <Card className="p-6 glass glass-light dark:glass">
-              <div className="flex items-center gap-3 mb-6">
-                <Users className="w-6 h-6 text-blue-600" />
+            {/* Referrals List - Filtered View */}
+            {activeReferralFilter !== 'total' && (
+              <div className="space-y-4">
                 <div>
-                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                    My Referrals ({referrals.length})
-                  </h3>
-                  <p className="text-sm text-slate-600 dark:text-slate-400">
-                    Earn ₹5 when they make their first purchase
+                  <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-3">
+                    {activeReferralFilter === 'joined' && '👥 Users who just joined - send them a reminder!'}
+                    {activeReferralFilter === 'purchased' && '✅ Users who purchased - claim your rewards!'}
+                    {activeReferralFilter === 'earned' && '💰 Referrals with claimed rewards'}
                   </p>
                 </div>
-              </div>
 
-              {referrals.length === 0 ? (
-                <div className="text-center py-12">
-                  <Trophy className="w-12 h-12 text-slate-400 mx-auto mb-3 opacity-50" />
-                  <p className="text-slate-500 dark:text-slate-400">
-                    No referrals yet. Share your code to get started!
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                  {referrals.map((referral) => {
-                    // Status from Firestore data
+                {filteredReferrals.length === 0 ? (
+                  <Card className="p-12 glass glass-light dark:glass text-center">
+                    <Trophy className="w-12 h-12 text-slate-400 mx-auto mb-3 opacity-50" />
+                    <p className="text-slate-500 dark:text-slate-400">
+                      No referrals found for this filter.
+                    </p>
+                  </Card>
+                ) : (
+                  <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                    {filteredReferrals.map((referral) => {
+                      // Status from Supabase data
                     const isPending = !referral.purchasedPlan;
                     const isPurchased = referral.purchasedPlan && !referral.rewardClaimed;
                     const isClaimed = referral.purchasedPlan && referral.rewardClaimed;
@@ -1172,11 +1237,37 @@ export default function EarnPage() {
                             </div>
 
                             {/* Action Button */}
+                            {isPending && (
+                              <Button
+                                onClick={() =>
+                                  handleSendReminder(
+                                    referral.id,
+                                    referral.referredName || 'User',
+                                    referral.referredEmail
+                                  )
+                                }
+                                disabled={remindingUser === referral.id}
+                                className="bg-blue-600 hover:bg-blue-700 text-white text-sm gap-2"
+                              >
+                                {remindingUser === referral.id ? (
+                                  <>
+                                    <div className="w-3 h-3 rounded-full border-2 border-white border-t-blue-700 animate-spin"></div>
+                                    Sending...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Bell className="w-4 h-4" />
+                                    Remind
+                                  </>
+                                )}
+                              </Button>
+                            )}
+
                             {isPurchased && (
                               <Button
                                 onClick={() => handleClaimReward(referral.id, referral.rewardAmount)}
                                 disabled={isClaimingThis}
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm gap-2"
+                                className={`bg-emerald-600 hover:bg-emerald-700 text-white text-sm gap-2 ${isClaimingThis ? 'claim-button-rainbow' : ''}`}
                               >
                                 {isClaimingThis ? (
                                   <>
@@ -1223,8 +1314,9 @@ export default function EarnPage() {
                     );
                   })}
                 </div>
-              )}
-            </Card>
+                )}
+              </div>
+            )}
 
             {/* Pending Rewards Card */}
             {stats.pendingRewards > 0 && (
@@ -1329,87 +1421,23 @@ export default function EarnPage() {
               </div>
             </div>
           )}
-
-          {/* Mobile Social Media - Below Main Content */}
-          {socialLinks && Object.values(socialLinks).some((link: any) => link) && (
-            <div className="lg:hidden mt-8 p-6 glass glass-light dark:glass rounded-lg animate-fade-in-up">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Follow Us</h3>
-              <div className="grid grid-cols-3 md:grid-cols-6 gap-3 sm:gap-4">
-                {socialLinks.youtube && (
-                  <a
-                    href={socialLinks.youtube}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-col items-center justify-center p-3 rounded-lg bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors group border border-red-200 dark:border-red-800"
-                  >
-                    <Youtube className="w-6 h-6 text-red-600 dark:text-red-400 mb-1 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">YouTube</span>
-                  </a>
-                )}
-
-                {socialLinks.instagram && (
-                  <a
-                    href={socialLinks.instagram}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-col items-center justify-center p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20 hover:bg-pink-100 dark:hover:bg-pink-900/40 transition-colors group border border-pink-200 dark:border-pink-800"
-                  >
-                    <Instagram className="w-6 h-6 text-pink-600 dark:text-pink-400 mb-1 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Instagram</span>
-                  </a>
-                )}
-
-                {socialLinks.tiktok && (
-                  <a
-                    href={socialLinks.tiktok}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-col items-center justify-center p-3 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors group border border-slate-200 dark:border-slate-700"
-                  >
-                    <Music2 className="w-6 h-6 text-slate-900 dark:text-white mb-1 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">TikTok</span>
-                  </a>
-                )}
-
-                {socialLinks.facebook && (
-                  <a
-                    href={socialLinks.facebook}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-col items-center justify-center p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors group border border-blue-200 dark:border-blue-800"
-                  >
-                    <Facebook className="w-6 h-6 text-blue-600 dark:text-blue-400 mb-1 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Facebook</span>
-                  </a>
-                )}
-
-                {socialLinks.twitter && (
-                  <a
-                    href={socialLinks.twitter}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-col items-center justify-center p-3 rounded-lg bg-sky-50 dark:bg-sky-900/20 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors group border border-sky-200 dark:border-sky-800"
-                  >
-                    <Mail className="w-6 h-6 text-sky-600 dark:text-sky-400 mb-1 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">X</span>
-                  </a>
-                )}
-
-                {socialLinks.telegram && (
-                  <a
-                    href={socialLinks.telegram}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-col items-center justify-center p-3 rounded-lg bg-cyan-50 dark:bg-cyan-900/20 hover:bg-cyan-100 dark:hover:bg-cyan-900/40 transition-colors group border border-cyan-200 dark:border-cyan-800"
-                  >
-                    <Send className="w-6 h-6 text-cyan-600 dark:text-cyan-400 mb-1 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Telegram</span>
-                  </a>
-                )}
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* Modals */}
+        <ReferralTreeModal 
+          isOpen={showReferralTree} 
+          onClose={() => setShowReferralTree(false)}
+          referrals={referrals}
+          userStats={stats}
+        />
+
+        <EarnBreakdownModal
+          isOpen={showEarnBreakdown}
+          onClose={() => setShowEarnBreakdown(false)}
+          referralEarnings={Math.round(stats.totalEarnings * 0.7)} // Estimate 70% from referrals
+          taskEarnings={Math.round(stats.totalEarnings * 0.2)} // Estimate 20% from tasks
+          orderEarnings={Math.round(stats.totalEarnings * 0.1)} // Estimate 10% from orders
+        />
       </div>
     </AppLayout>
   );

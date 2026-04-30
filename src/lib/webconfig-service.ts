@@ -1,18 +1,9 @@
 /**
  * Web Configuration Service
- * Manages website settings stored in Firestore
+ * Manages website settings stored in Supabase.
  */
 
-import {
-  db,
-} from '@/lib/firebase-config';
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  Timestamp,
-} from 'firebase/firestore';
+import { supabase } from '@/lib/supabase-config';
 
 export interface WebConfigData {
   id: string;
@@ -32,45 +23,54 @@ export interface WebConfigData {
     phone: string;
     whatsapp: string;
   };
-  updatedAt: Timestamp;
+  updatedAt: string;
 }
 
-const CONFIG_COLLECTION = 'webConfig';
-const CONFIG_DOC = 'siteConfig';
+const CONFIG_DOC = 'web_config';
 
-/**
- * Get current web configuration
- */
+const defaultWebConfig: WebConfigData = {
+  id: CONFIG_DOC,
+  planPrices: {
+    '1month': 100,
+    '3month': 250,
+    '6month': 450,
+    '12month': 800,
+  },
+  siteTitle: 'PrimexStream Pro',
+  siteDescription: 'Premium IPTV Service',
+  maintenanceMode: false,
+  features: {
+    referralEnabled: true,
+    socialTasksEnabled: true,
+    walletEnabled: true,
+  },
+  contact: {
+    email: 'support@primexstream.com',
+    phone: '',
+    whatsapp: '',
+  },
+  updatedAt: new Date().toISOString(),
+};
+
 export const getWebConfig = async (): Promise<WebConfigData | null> => {
   try {
-    const docRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC);
-    const docSnap = await getDoc(docRef);
+    const { data, error } = await supabase
+      .from('app_config')
+      .select('value, updated_at')
+      .eq('id', CONFIG_DOC)
+      .maybeSingle();
 
-    if (docSnap.exists()) {
-      return {
-        id: docSnap.id,
-        ...docSnap.data(),
-      } as WebConfigData;
+    if (error) throw error;
+
+    if (!data?.value) {
+      return defaultWebConfig;
     }
 
-    // Return default if doesn't exist
     return {
+      ...defaultWebConfig,
+      ...(data.value as Partial<WebConfigData>),
       id: CONFIG_DOC,
-      planPrices: {},
-      siteTitle: 'PrimexStream Pro',
-      siteDescription: 'Premium IPTV Service',
-      maintenanceMode: false,
-      features: {
-        referralEnabled: true,
-        socialTasksEnabled: true,
-        walletEnabled: true,
-      },
-      contact: {
-        email: 'support@primexstream.com',
-        phone: '',
-        whatsapp: '',
-      },
-      updatedAt: Timestamp.now(),
+      updatedAt: data.updated_at || new Date().toISOString(),
     };
   } catch (error) {
     console.error('Error getting web config:', error);
@@ -78,107 +78,60 @@ export const getWebConfig = async (): Promise<WebConfigData | null> => {
   }
 };
 
-/**
- * Update web configuration
- */
 export const updateWebConfig = async (config: WebConfigData): Promise<boolean> => {
   try {
-    const docRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC);
-    
-    // Remove id field before saving
-    const { id, ...configData } = config;
-    
-    await setDoc(
-      docRef,
-      {
-        ...configData,
-        updatedAt: Timestamp.now(),
-      },
-      { merge: true }
-    );
+    const { id, updatedAt, ...configData } = config;
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('app_config')
+      .upsert({
+        id: CONFIG_DOC,
+        value: {
+          ...configData,
+          updatedAt: now,
+        },
+        updated_at: now,
+      });
 
-    console.log('✅ Web config updated successfully');
+    if (error) throw error;
     return true;
   } catch (error) {
-    console.error('❌ Error updating web config:', error);
+    console.error('Error updating web config:', error);
     throw error;
   }
 };
 
-/**
- * Get specific plan price
- */
 export const getPlanPrice = async (planId: string): Promise<number | null> => {
   try {
     const config = await getWebConfig();
-    if (config?.planPrices && config.planPrices[planId]) {
-      return config.planPrices[planId];
-    }
-    return null;
+    return config?.planPrices?.[planId] ?? null;
   } catch (error) {
     console.error('Error getting plan price:', error);
     return null;
   }
 };
 
-/**
- * Update specific plan price
- */
 export const updatePlanPrice = async (planId: string, price: number): Promise<boolean> => {
   try {
     const config = await getWebConfig();
     if (!config) return false;
 
-    const updatedConfig = {
+    return updateWebConfig({
       ...config,
       planPrices: {
         ...(config.planPrices || {}),
         [planId]: price,
       },
-    };
-
-    return await updateWebConfig(updatedConfig);
+    });
   } catch (error) {
     console.error('Error updating plan price:', error);
     return false;
   }
 };
 
-/**
- * Initialize default web config if it doesn't exist
- */
 export const initializeWebConfig = async (): Promise<void> => {
-  try {
-    const config = await getWebConfig();
-    if (!config) {
-      const defaultConfig: WebConfigData = {
-        id: CONFIG_DOC,
-        planPrices: {
-          '1month': 100,
-          '3month': 250,
-          '6month': 450,
-          '12month': 800,
-        },
-        siteTitle: 'PrimexStream Pro',
-        siteDescription: 'Premium IPTV Service',
-        maintenanceMode: false,
-        features: {
-          referralEnabled: true,
-          socialTasksEnabled: true,
-          walletEnabled: true,
-        },
-        contact: {
-          email: 'support@primexstream.com',
-          phone: '',
-          whatsapp: '',
-        },
-        updatedAt: Timestamp.now(),
-      };
-
-      await updateWebConfig(defaultConfig);
-      console.log('✅ Default web config initialized');
-    }
-  } catch (error) {
-    console.error('Error initializing web config:', error);
+  const config = await getWebConfig();
+  if (!config) {
+    await updateWebConfig(defaultWebConfig);
   }
 };

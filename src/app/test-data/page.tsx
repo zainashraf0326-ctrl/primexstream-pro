@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { AlertCircle, CheckCircle, Loader } from 'lucide-react';
-import { seedTestData, cleanTestData, getTestDataInfo } from '@/lib/firebase-test-data';
+import { seedTestData, cleanTestData, getTestDataInfo } from '@/lib/supabase-test-data';
 
 export default function TestDataPage() {
   const [loading, setLoading] = useState(false);
@@ -54,9 +54,9 @@ export default function TestDataPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-6">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-4xl font-bold text-slate-900 dark:text-white mb-2">Firebase Test Data</h1>
+        <h1 className="text-4xl font-bold text-slate-900 dark:text-white mb-2">Supabase Test Data</h1>
         <p className="text-slate-600 dark:text-slate-400 mb-8">
-          Populate your Firebase database with sample data for testing
+          Populate your Supabase database with sample data for testing
         </p>
 
         {/* Alert Message */}
@@ -168,11 +168,11 @@ export default function TestDataPage() {
             <div className="space-y-4 text-slate-700 dark:text-slate-300">
               <div>
                 <p className="font-medium mb-2">Step 1: Seed Test Data</p>
-                <p className="text-sm">Click "Seed Test Data" to populate your Firebase with sample users and orders</p>
+                <p className="text-sm">Click "Seed Test Data" to populate Supabase seed data and create a test notification for your current account</p>
               </div>
               <div>
-                <p className="font-medium mb-2">Step 2: Check Firebase Console</p>
-                <p className="text-sm">Go to Firebase Console → Realtime Database and Firestore to verify the data</p>
+                <p className="font-medium mb-2">Step 2: Check Supabase Console</p>
+                <p className="text-sm">Go to your Supabase project tables to verify the seeded rows</p>
               </div>
               <div>
                 <p className="font-medium mb-2">Step 3: Test the App</p>

@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/admin-layout';
-import { db } from '@/lib/firebase-config';
-import { collection, onSnapshot, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { supabase } from '@/lib/supabase-config';
 
 interface PaymentMethod {
   id: string;
@@ -29,16 +28,41 @@ export default function AdminPaymentMethodsPage() {
 
   // Listen to payment methods in real-time
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'paymentMethods'), (snapshot) => {
-      const methodsList = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as PaymentMethod[];
-      setMethods(methodsList);
-      setLoading(false);
-    });
+    let active = true;
+    const loadMethods = async () => {
+      const { data, error } = await supabase
+        .from('payment_methods')
+        .select('*')
+        .order('name', { ascending: true });
 
-    return unsubscribe;
+      if (error) {
+        console.error('Error loading payment methods:', error);
+        setLoading(false);
+        return;
+      }
+
+      if (!active) return;
+      setMethods((data || []).map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        icon: row.icon,
+        instructions: row.instructions,
+        accountInfo: row.account_info,
+        isActive: row.is_active,
+      })));
+      setLoading(false);
+    };
+
+    void loadMethods();
+    const channel = supabase
+      .channel('payment-methods-watch')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_methods' }, loadMethods)
+      .subscribe();
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleSaveMethod = async (e: React.FormEvent) => {
@@ -50,10 +74,15 @@ export default function AdminPaymentMethodsPage() {
 
     try {
       const methodId = editingMethod?.id || formData.name?.toLowerCase().replace(/\s+/g, '-');
-      await setDoc(doc(db, 'paymentMethods', methodId as string), {
+      const { error } = await supabase.from('payment_methods').upsert({
         id: methodId,
-        ...formData,
+        name: formData.name,
+        icon: formData.icon,
+        instructions: formData.instructions,
+        account_info: formData.accountInfo,
+        is_active: formData.isActive ?? true,
       });
+      if (error) throw error;
       alert(`Payment method ${editingMethod ? 'updated' : 'created'} successfully!`);
       setShowForm(false);
       setEditingMethod(null);
@@ -73,7 +102,8 @@ export default function AdminPaymentMethodsPage() {
   const handleDeleteMethod = async (methodId: string) => {
     if (window.confirm('Are you sure you want to delete this payment method?')) {
       try {
-        await deleteDoc(doc(db, 'paymentMethods', methodId));
+        const { error } = await supabase.from('payment_methods').delete().eq('id', methodId);
+        if (error) throw error;
         alert('Payment method deleted successfully!');
       } catch (error) {
         console.error('Error deleting method:', error);

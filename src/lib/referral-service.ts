@@ -1,39 +1,14 @@
 /**
- * REFERRAL REWARD SYSTEM
- * 
- * Features:
- * - Track referrals with unique codes
- * - Wallet-based rewards
- * - Reward percentage/fixed amounts
- * - Reward history and progress levels
- * - Duplicate prevention
+ * Supabase referral reward system.
  */
 
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-  addDoc,
-  query,
-  where,
-  onSnapshot,
-  Timestamp,
-  increment,
-  writeBatch,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase-config';
-import { sendNotification } from '@/lib/firebase-service';
-import { updateUser } from '@/lib/firestore-service';
+import { supabase } from '@/lib/supabase-config';
 import {
   notifyReferrerNewSignup,
   notifyReferredUserWelcome,
   notifySubscriptionReminder,
 } from '@/lib/notification-service';
-
-// ===== TYPES =====
+import { sendNotification } from '@/lib/supabase-service';
 
 export interface Referral {
   id: string;
@@ -42,8 +17,11 @@ export interface Referral {
   status: 'signed_up' | 'purchased';
   rewardGiven: boolean;
   rewardAmount?: number;
-  createdAt: Timestamp;
-  purchasedAt?: Timestamp;
+  createdAt: string;
+  purchasedAt?: string;
+  referralName?: string;
+  referralEmail?: string;
+  lastReminderSent?: string;
 }
 
 export interface Reward {
@@ -53,573 +31,462 @@ export interface Reward {
   type: 'signup' | 'purchase';
   amount: number;
   reason: string;
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface Wallet {
   userId: string;
   balance: number;
   totalEarnings: number;
-  updatedAt: Timestamp;
+  updatedAt: string;
+  pendingBalance?: number;
+  confirmedBalance?: number;
+  usableBalance?: number;
 }
 
 export interface ReferralLevel {
   level: 'Beginner' | 'Pro' | 'Elite';
   minReferrals: number;
   minEarnings: number;
-  bonus: number; // bonus percentage/amount
+  bonus: number;
 }
 
-// Referral level tiers
 const REFERRAL_LEVELS: ReferralLevel[] = [
   { level: 'Beginner', minReferrals: 0, minEarnings: 0, bonus: 0 },
   { level: 'Pro', minReferrals: 5, minEarnings: 25, bonus: 5 },
   { level: 'Elite', minReferrals: 15, minEarnings: 100, bonus: 10 },
 ];
 
-// Reward amounts
 const REWARD_CONFIG = {
-  SIGNUP: 5, // $5 for signup
-  PURCHASE: 5, // $5 for purchase
+  SIGNUP: 5,
+  PURCHASE: 5,
 };
 
-// ===== WALLET MANAGEMENT =====
+function mapReferral(row: any): Referral {
+  const status = row.status === 'purchased' || row.status === 'claimed' ? 'purchased' : 'signed_up';
+  return {
+    id: row.id,
+    referrerId: row.referrer_uid,
+    referredUserId: row.referred_uid,
+    status,
+    rewardGiven: Boolean(row.reward_claimed),
+    rewardAmount: Number(row.reward_amount || REWARD_CONFIG.PURCHASE),
+    createdAt: row.joined_at,
+    purchasedAt: row.purchased_at,
+    referralName: row.referred_name,
+    referralEmail: row.referred_email,
+    lastReminderSent: row.last_reminder_sent,
+  };
+}
 
-/**
- * Initialize wallet for new user
- */
 export async function initializeWallet(userId: string): Promise<Wallet> {
-  try {
-    const walletRef = doc(db, 'wallets', userId);
-    const wallet: Wallet = {
+  const now = new Date().toISOString();
+  const { data: current } = await supabase
+    .from('users')
+    .select('wallet_balance, usable_balance, credits')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (!current) {
+    return {
       userId,
       balance: 0,
       totalEarnings: 0,
-      updatedAt: Timestamp.now(),
+      updatedAt: now,
+      pendingBalance: 0,
+      confirmedBalance: 0,
+      usableBalance: 0,
     };
-    await setDoc(walletRef, wallet);
-    return wallet;
-  } catch (error) {
-    console.error('Error initializing wallet:', error);
-    throw error;
   }
+
+  await supabase
+    .from('users')
+    .update({
+      wallet_balance: Number(current.wallet_balance || 0),
+      usable_balance: Number(current.usable_balance || 0),
+      credits: Number(current.credits || 0),
+    })
+    .eq('id', userId);
+
+  return getWallet(userId) as Promise<Wallet>;
 }
 
-/**
- * Get wallet for user
- */
 export async function getWallet(userId: string): Promise<Wallet | null> {
-  try {
-    const walletRef = doc(db, 'wallets', userId);
-    const snapshot = await getDoc(walletRef);
-    if (snapshot.exists()) {
-      return { ...snapshot.data() } as Wallet;
-    }
-    // Auto-create if doesn't exist
-    return initializeWallet(userId);
-  } catch (error) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, credits, usable_balance, wallet_balance, updated_at')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
     console.error('Error fetching wallet:', error);
     return null;
   }
+
+  if (!data) return null;
+
+  const balance = Number(data.wallet_balance || data.usable_balance || data.credits || 0);
+  return {
+    userId: data.id,
+    balance,
+    totalEarnings: Number(data.credits || balance),
+    updatedAt: data.updated_at,
+    pendingBalance: 0,
+    confirmedBalance: balance,
+    usableBalance: Number(data.usable_balance || balance),
+  };
 }
 
-/**
- * Listen to wallet changes in real-time
- */
 export function listenToWallet(userId: string, callback: (wallet: Wallet) => void) {
-  try {
-    const walletRef = doc(db, 'wallets', userId);
-    return onSnapshot(
-      walletRef,
-      (snapshot) => {
-        if (snapshot.exists()) {
-          callback({ ...snapshot.data() } as Wallet);
-        }
-      },
-      (error) => {
-        console.error('Error listening to wallet:', error);
-      }
-    );
-  } catch (error) {
-    console.error('Error setting up wallet listener:', error);
-    return () => {};
-  }
+  const load = async () => {
+    const wallet = await getWallet(userId);
+    if (wallet) callback(wallet);
+  };
+  void load();
+
+  const channel = supabase
+    .channel(`wallet-${userId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'users', filter: `id=eq.${userId}` }, load)
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }
 
-/**
- * Add funds to wallet
- */
 export async function addToWallet(
   userId: string,
   amount: number,
   reason: string
 ): Promise<boolean> {
-  try {
-    const walletRef = doc(db, 'wallets', userId);
+  const wallet = await getWallet(userId);
+  if (!wallet) return false;
 
-    // Use batch write for atomic update
-    const batch = writeBatch(db);
+  const newBalance = wallet.balance + amount;
+  const { error } = await supabase
+    .from('users')
+    .update({
+      wallet_balance: newBalance,
+      usable_balance: newBalance,
+      credits: wallet.totalEarnings + amount,
+    })
+    .eq('id', userId);
 
-    // Update wallet
-    batch.update(walletRef, {
-      balance: increment(amount),
-      totalEarnings: increment(amount),
-      updatedAt: Timestamp.now(),
-    });
-
-    // Add transaction history
-    const historyRef = collection(db, `wallets/${userId}/transactions`);
-    const newHistory = doc(historyRef);
-    batch.set(newHistory, {
-      amount,
-      reason,
-      type: 'credit',
-      createdAt: Timestamp.now(),
-    });
-
-    await batch.commit();
-    return true;
-  } catch (error) {
+  if (error) {
     console.error('Error adding to wallet:', error);
     return false;
   }
+
+  await supabase.from('wallet_history').insert({
+    user_id: userId,
+    amount,
+    reason,
+    description: reason,
+    type: 'credit',
+    balance_before: wallet.balance,
+    balance_after: newBalance,
+  });
+
+  return true;
 }
 
-/**
- * Get wallet transaction history
- */
 export async function getWalletHistory(userId: string): Promise<any[]> {
-  try {
-    const historyRef = collection(db, `wallets/${userId}/transactions`);
-    const q = query(historyRef);
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-  } catch (error) {
+  const { data, error } = await supabase
+    .from('wallet_history')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
     console.error('Error fetching wallet history:', error);
     return [];
   }
+
+  return (data || []).map((row: any) => ({
+    id: row.id,
+    type: row.type,
+    amount: Number(row.amount || 0),
+    description: row.description || row.reason || '',
+    status: 'confirmed',
+    createdAt: row.created_at,
+    referralId: row.referral_id,
+  }));
 }
 
-// ===== REFERRAL TRACKING =====
-
-/**
- * Record new referral (called on signup)
- */
 export async function recordNewReferral(
   referrerId: string,
   referredUserId: string
 ): Promise<Referral | null> {
-  try {
-    // Check for duplicate
-    const q = query(
-      collection(db, 'referrals'),
-      where('referrerId', '==', referrerId),
-      where('referredUserId', '==', referredUserId)
-    );
-    const existing = await getDocs(q);
-    if (existing.docs.length > 0) {
-      console.warn('Duplicate referral attempt prevented');
-      return null;
-    }
+  const { data: existing } = await supabase
+    .from('referrals')
+    .select('id')
+    .eq('referrer_uid', referrerId)
+    .eq('referred_uid', referredUserId)
+    .limit(1);
+  if (existing && existing.length > 0) return null;
 
-    // Prevent circular referrals: Check if referredUserId has already referred referrerId
-    const circularCheck = query(
-      collection(db, 'referrals'),
-      where('referrerId', '==', referredUserId),
-      where('referredUserId', '==', referrerId)
-    );
-    const circularExisting = await getDocs(circularCheck);
-    if (circularExisting.docs.length > 0) {
-      console.warn('Circular referral attempt prevented');
-      return null; // User B already referred User A, so A cannot use B's code
-    }
+  const { data: circular } = await supabase
+    .from('referrals')
+    .select('id')
+    .eq('referrer_uid', referredUserId)
+    .eq('referred_uid', referrerId)
+    .limit(1);
+  if (circular && circular.length > 0) return null;
 
-    // Create referral record
-    const referralRef = collection(db, 'referrals');
-    const newReferral = await addDoc(referralRef, {
-      referrerId,
-      referredUserId,
-      status: 'signed_up',
-      rewardGiven: false,
-      rewardAmount: 0,
-      createdAt: Timestamp.now(),
-    } as Referral);
+  const [{ data: referrer }, { data: referred }] = await Promise.all([
+    supabase.from('users').select('*').eq('id', referrerId).maybeSingle(),
+    supabase.from('users').select('*').eq('id', referredUserId).maybeSingle(),
+  ]);
 
-    // Get referrer info
-    const referrerRef = doc(db, 'users', referrerId);
-    const referrerSnap = await getDoc(referrerRef);
-    const referrerName = referrerSnap.exists() ? referrerSnap.data().name : 'Your Friend';
-    const referrerTotalReferrals = referrerSnap.exists() ? (referrerSnap.data().totalReferrals || 0) + 1 : 1;
+  const { data: row, error } = await supabase
+    .from('referrals')
+    .insert({
+      referrer_uid: referrerId,
+      referrer_name: referrer?.name || 'Your Friend',
+      referrer_email: referrer?.email || '',
+      referred_uid: referredUserId,
+      referred_name: referred?.name || 'New User',
+      referred_email: referred?.email || '',
+      referral_code: referrer?.referral_code || '',
+      reward_amount: REWARD_CONFIG.SIGNUP,
+      reward_claimed: false,
+      purchased_plan: false,
+      status: 'joined',
+    })
+    .select('*')
+    .single();
 
-    // Get referred user info
-    const userRef = doc(db, 'users', referredUserId);
-    const userSnap = await getDoc(userRef);
-    const userName = userSnap.exists() ? userSnap.data().name : 'New User';
-
-    // Add $5 signup bonus to referrer's wallet (NOT redeemable yet, only appears as balance)
-    const signupBonus = REWARD_CONFIG.SIGNUP || 2;
-    
-    try {
-      await addToWallet(referrerId, signupBonus, 'Referral signup bonus');
-    } catch (error) {
-      console.warn('Failed to add signup bonus to wallet:', error);
-    }
-
-    // Send notifications using new notification service
-    try {
-      // Notify referrer (Person A): "Noor is your new referral, encourage to buy subscription..."
-      await notifyReferrerNewSignup(referrerId, referrerName, {
-        referredId: referredUserId,
-        referredName: userName,
-        referralCount: referrerTotalReferrals,
-      });
-    } catch (error) {
-      console.warn('Failed to send referrer notification:', error);
-    }
-
-    try {
-      // Notify referred user (Person B): "Welcome to Zain team, please buy subscription..."
-      await notifyReferredUserWelcome(referredUserId, referrerName, 10);
-    } catch (error) {
-      console.warn('Failed to send referred user welcome notification:', error);
-    }
-
-    // Update user's totalReferrals
-    await updateUser(referrerId, {
-      totalReferrals: referrerTotalReferrals,
-    } as any);
-
-    return {
-      id: newReferral.id,
-      referrerId,
-      referredUserId,
-      status: 'signed_up',
-      rewardGiven: false,
-      rewardAmount: 0,
-      createdAt: Timestamp.now(),
-    } as Referral;
-  } catch (error) {
+  if (error) {
     console.error('Error recording referral:', error);
     throw error;
   }
+
+  await addToWallet(referrerId, REWARD_CONFIG.SIGNUP, 'Referral signup bonus');
+  await notifyReferrerNewSignup(referrerId, referrer?.name || 'User', {
+    referredId: referredUserId,
+    referredName: referred?.name || 'New User',
+    referralCount: Number(referrer?.total_referrals || 0) + 1,
+  });
+  await notifyReferredUserWelcome(referredUserId, referrer?.name || 'Your friend', 10);
+
+  return mapReferral(row);
 }
 
-/**
- * Mark referral as purchased and reward referrer
- * Called when referred user completes their first purchase
- */
 export async function rewardReferralPurchase(referredUserId: string): Promise<boolean> {
-  try {
-    // Find referral for this user
-    const q = query(
-      collection(db, 'referrals'),
-      where('referredUserId', '==', referredUserId),
-      where('status', '==', 'signed_up'),
-      where('rewardGiven', '==', false)
-    );
+  const { data: referral, error } = await supabase
+    .from('referrals')
+    .select('*')
+    .eq('referred_uid', referredUserId)
+    .eq('reward_claimed', false)
+    .in('status', ['joined', 'purchased'])
+    .order('joined_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
-    const referrals = await getDocs(q);
-    if (referrals.docs.length === 0) {
-      console.warn('No referral found for user:', referredUserId);
-      return false;
-    }
+  if (error || !referral) return false;
 
-    const referralDoc = referrals.docs[0];
-    const referral = referralDoc.data() as Referral;
-    const referrerId = referral.referrerId;
+  const referrerId = referral.referrer_uid;
+  const referrerLevel = await getUserReferralLevel(referrerId);
+  const baseReward = REWARD_CONFIG.PURCHASE;
+  const totalReward = Math.round(baseReward * (1 + referrerLevel.bonus / 100) * 100) / 100;
 
-    // Calculate reward with bonus
-    const referrerLevel = await getUserReferralLevel(referrerId);
-    const baseReward = REWARD_CONFIG.PURCHASE;
-    const bonusPercentage = referrerLevel.bonus / 100;
-    const totalReward = Math.round((baseReward * (1 + bonusPercentage)) * 100) / 100;
+  const wallet = await getWallet(referrerId);
+  const currentBalance = wallet?.balance || 0;
+  const newBalance = currentBalance + totalReward;
 
-    // Use batch for atomic transaction
-    const batch = writeBatch(db);
+  const referralUpdate = await supabase
+    .from('referrals')
+    .update({
+      status: 'claimed',
+      purchased_plan: true,
+      purchased_at: new Date().toISOString(),
+      reward_claimed: true,
+      reward_amount: totalReward,
+      claimed_at: new Date().toISOString(),
+    })
+    .eq('id', referral.id);
 
-    // Update referral status
-    batch.update(doc(db, 'referrals', referralDoc.id), {
-      status: 'purchased',
-      rewardGiven: true,
-      rewardAmount: totalReward,
-      purchasedAt: Timestamp.now(),
-    });
+  if (referralUpdate.error) return false;
 
-    // Add to referrer's wallet
-    const walletRef = doc(db, 'wallets', referrerId);
-    batch.update(walletRef, {
-      balance: increment(totalReward),
-      totalEarnings: increment(totalReward),
-      updatedAt: Timestamp.now(),
-    });
+  await supabase
+    .from('users')
+    .update({
+      wallet_balance: newBalance,
+      usable_balance: newBalance,
+      credits: Number(wallet?.totalEarnings || 0) + totalReward,
+    })
+    .eq('id', referrerId);
 
-    // Add transaction history
-    const historyRef = doc(collection(db, `wallets/${referrerId}/transactions`));
-    batch.set(historyRef, {
-      amount: totalReward,
-      reason: 'Referral purchase reward',
-      referredUserId,
-      type: 'credit',
-      createdAt: Timestamp.now(),
-    });
+  await supabase.from('wallet_history').insert({
+    user_id: referrerId,
+    type: 'referral_reward',
+    amount: totalReward,
+    description: `Referral purchase reward${referrerLevel.bonus > 0 ? ` (${referrerLevel.level} +${referrerLevel.bonus}%)` : ''}`,
+    reason: 'Referral purchase reward',
+    referral_id: referral.id,
+    balance_before: currentBalance,
+    balance_after: newBalance,
+  });
 
-    // Add reward record
-    const rewardRef = doc(collection(db, 'rewards'));
-    batch.set(rewardRef, {
-      referrerId,
-      referredUserId,
-      type: 'purchase',
-      amount: totalReward,
-      reason: `Referral purchase reward${referrerLevel.bonus > 0 ? ` (${referrerLevel.level} +${referrerLevel.bonus}%)` : ''}`,
-      createdAt: Timestamp.now(),
-    });
+  await supabase.from('rewards').insert({
+    referrer_id: referrerId,
+    referred_user_id: referredUserId,
+    type: 'purchase',
+    amount: totalReward,
+    reason: 'Referral purchase reward',
+  });
 
-    await batch.commit();
+  await sendNotification(referrerId, {
+    title: 'Reward Earned!',
+    message: `${referral.referred_name || 'A user'} made a purchase. You earned $${totalReward.toFixed(2)}.`,
+    type: 'referral',
+  }).catch((notifyError) => {
+    console.warn('Failed to send purchase reward notification:', notifyError);
+  });
 
-    // Send notification
-    const referrerRef = doc(db, 'users', referrerId);
-    const referrerSnap = await getDoc(referrerRef);
-    const referrerName = referrerSnap.exists() ? referrerSnap.data().name : 'User';
-
-    const referredUserRef = doc(db, 'users', referredUserId);
-    const referredUserSnap = await getDoc(referredUserRef);
-    const referredUserName = referredUserSnap.exists()
-      ? referredUserSnap.data().name
-      : 'A user';
-
-    await sendNotification(referrerId, {
-      title: '💰 Reward Earned!',
-      message: `${referredUserName} made a purchase! You earned $${totalReward.toFixed(2)}${referrerLevel.bonus > 0 ? ` (+${referrerLevel.bonus}% ${referrerLevel.level} bonus)` : ''}`,
-      type: 'referral',
-    }).catch((error) => {
-      console.warn('Failed to send purchase reward notification:', error);
-    });
-
-    return true;
-  } catch (error) {
-    console.error('Error rewarding referral purchase:', error);
-    return false;
-  }
+  return true;
 }
 
-/**
- * Send reminder notification to referred user to complete purchase
- */
 export async function sendReminderToReferral(
   referrerId: string,
   referralId: string,
   referrerName: string
 ): Promise<boolean> {
-  try {
-    // Get the referral details
-    const referralRef = doc(db, 'referrals', referralId);
-    const referralSnap = await getDoc(referralRef);
-    
-    if (!referralSnap.exists()) {
-      console.warn('Referral not found:', referralId);
-      return false;
-    }
+  const { data: referral, error } = await supabase
+    .from('referrals')
+    .select('*')
+    .eq('id', referralId)
+    .eq('referrer_uid', referrerId)
+    .maybeSingle();
 
-    const referral = referralSnap.data() as Referral;
-    const referredUserId = referral.referredUserId;
+  if (error || !referral) return false;
 
-    // Send reminder notification to referred user using new service
-    try {
-      await notifySubscriptionReminder(
-        referredUserId,
-        referrerName,
-        `${referrerName} sent you a reminder! 📬\n\nComplete your subscription purchase and help them earn rewards! 🎁\n\nVisit the IPTV section to buy now and get your discount.`
-      );
-    } catch (error) {
-      console.warn('Failed to send reminder notification:', error);
-      return false;
-    }
+  await notifySubscriptionReminder(
+    referral.referred_uid,
+    referrerName,
+    `${referrerName} sent you a reminder.\n\nComplete your subscription purchase and help them earn rewards.\n\nVisit the IPTV section to buy now and get your discount.`
+  );
 
-    // Update referral with reminder sent timestamp
-    await updateDoc(referralRef, {
-      reminderSentAt: Timestamp.now(),
-      reminderCount: ((referralSnap.data() as any).reminderCount || 0) + 1,
-    });
+  await supabase
+    .from('referrals')
+    .update({
+      last_reminder_sent: new Date().toISOString(),
+      reminder_count: Number(referral.reminder_count || 0) + 1,
+    })
+    .eq('id', referralId);
 
-    return true;
-  } catch (error) {
-    console.error('Error sending reminder:', error);
-    return false;
-  }
+  return true;
 }
 
-/**
- * Get all referrals for a user
- */
 export async function getReferralsForUser(referrerId: string): Promise<Referral[]> {
-  try {
-    const q = query(collection(db, 'referrals'), where('referrerId', '==', referrerId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Referral[];
-  } catch (error) {
+  const { data, error } = await supabase
+    .from('referrals')
+    .select('*')
+    .eq('referrer_uid', referrerId)
+    .order('joined_at', { ascending: false });
+
+  if (error) {
     console.error('Error fetching referrals:', error);
     return [];
   }
+
+  return (data || []).map(mapReferral);
 }
 
-/**
- * Listen to referrals in real-time
- */
 export function listenToReferrals(
   referrerId: string,
   callback: (referrals: Referral[]) => void
 ) {
-  try {
-    const q = query(collection(db, 'referrals'), where('referrerId', '==', referrerId));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const referrals = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Referral[];
-        callback(referrals);
-      },
-      (error) => {
-        console.error('Error listening to referrals:', error);
-      }
-    );
-  } catch (error) {
-    console.error('Error setting up referrals listener:', error);
-    return () => {};
-  }
+  const load = async () => callback(await getReferralsForUser(referrerId));
+  void load();
+
+  const channel = supabase
+    .channel(`legacy-referrals-${referrerId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'referrals', filter: `referrer_uid=eq.${referrerId}` }, load)
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }
 
-// ===== REFERRAL LEVELS =====
-
-/**
- * Get user's referral level
- */
 export async function getUserReferralLevel(userId: string): Promise<ReferralLevel> {
-  try {
-    const referrals = await getReferralsForUser(userId);
-    const purchaseCount = referrals.filter((r) => r.status === 'purchased').length;
+  const referrals = await getReferralsForUser(userId);
+  const purchaseCount = referrals.filter((r) => r.status === 'purchased').length;
+  const wallet = await getWallet(userId);
+  const earnings = wallet?.totalEarnings || 0;
 
-    const wallet = await getWallet(userId);
-    const earnings = wallet?.totalEarnings || 0;
-
-    // Find the highest level user qualifies for
-    const level = REFERRAL_LEVELS.reverse().find(
-      (l) => purchaseCount >= l.minReferrals && earnings >= l.minEarnings
-    );
-
-    return level || REFERRAL_LEVELS[0];
-  } catch (error) {
-    console.error('Error calculating referral level:', error);
-    return REFERRAL_LEVELS[0];
-  }
+  return (
+    [...REFERRAL_LEVELS]
+      .reverse()
+      .find((level) => purchaseCount >= level.minReferrals && earnings >= level.minEarnings) ||
+    REFERRAL_LEVELS[0]
+  );
 }
 
-/**
- * Get progress to next referral level
- */
 export async function getReferralLevelProgress(userId: string): Promise<{
   currentLevel: ReferralLevel;
   nextLevel: ReferralLevel | null;
-  progress: number; // 0-100
+  progress: number;
   referralCount: number;
   earnings: number;
 }> {
-  try {
-    const currentLevel = await getUserReferralLevel(userId);
-    const referrals = await getReferralsForUser(userId);
-    const purchaseCount = referrals.filter((r) => r.status === 'purchased').length;
-    const wallet = await getWallet(userId);
-    const earnings = wallet?.totalEarnings || 0;
+  const currentLevel = await getUserReferralLevel(userId);
+  const referrals = await getReferralsForUser(userId);
+  const purchaseCount = referrals.filter((r) => r.status === 'purchased').length;
+  const wallet = await getWallet(userId);
+  const earnings = wallet?.totalEarnings || 0;
 
-    // Find next level
-    const currentIndex = REFERRAL_LEVELS.findIndex((l) => l.level === currentLevel.level);
-    const nextLevel =
-      currentIndex < REFERRAL_LEVELS.length - 1
-        ? REFERRAL_LEVELS[currentIndex + 1]
-        : null;
+  const currentIndex = REFERRAL_LEVELS.findIndex((l) => l.level === currentLevel.level);
+  const nextLevel = currentIndex < REFERRAL_LEVELS.length - 1 ? REFERRAL_LEVELS[currentIndex + 1] : null;
 
-    // Calculate progress
-    let progress = 0;
-    if (nextLevel) {
-      const referralProgress =
-        (purchaseCount / nextLevel.minReferrals) * 100;
-      const earningsProgress = (earnings / nextLevel.minEarnings) * 100;
-      progress = Math.min(referralProgress, earningsProgress, 100);
-    } else {
-      progress = 100; // Already at max level
-    }
+  const progress = nextLevel
+    ? Math.min((purchaseCount / nextLevel.minReferrals) * 100, (earnings / nextLevel.minEarnings) * 100, 100)
+    : 100;
 
-    return {
-      currentLevel,
-      nextLevel,
-      progress,
-      referralCount: purchaseCount,
-      earnings,
-    };
-  } catch (error) {
-    console.error('Error calculating referral level progress:', error);
-    return {
-      currentLevel: REFERRAL_LEVELS[0],
-      nextLevel: REFERRAL_LEVELS[1],
-      progress: 0,
-      referralCount: 0,
-      earnings: 0,
-    };
-  }
+  return {
+    currentLevel,
+    nextLevel,
+    progress,
+    referralCount: purchaseCount,
+    earnings,
+  };
 }
 
-// ===== UTILITIES =====
-
-/**
- * Get reward records for a user
- */
 export async function getRewardHistory(userId: string): Promise<Reward[]> {
-  try {
-    const q = query(collection(db, 'rewards'), where('referrerId', '==', userId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Reward[];
-  } catch (error) {
-    console.error('Error fetching reward history:', error);
-    return [];
-  }
+  const { data, error } = await supabase
+    .from('wallet_history')
+    .select('*')
+    .eq('user_id', userId)
+    .in('type', ['referral_reward', 'credit'])
+    .order('created_at', { ascending: false });
+
+  if (error) return [];
+
+  return (data || []).map((row: any) => ({
+    id: row.id,
+    referrerId: row.user_id,
+    referredUserId: '',
+    type: row.type === 'referral_reward' ? 'purchase' : 'signup',
+    amount: Number(row.amount || 0),
+    reason: row.reason || row.description || '',
+    createdAt: row.created_at,
+  }));
 }
 
-/**
- * Get total referral stats
- */
 export async function getReferralStats(userId: string): Promise<{
   totalReferrals: number;
   activeReferrals: number;
   completedPurchases: number;
   totalRewards: number;
 }> {
-  try {
-    const referrals = await getReferralsForUser(userId);
-    const wallet = await getWallet(userId);
+  const referrals = await getReferralsForUser(userId);
+  const wallet = await getWallet(userId);
 
-    return {
-      totalReferrals: referrals.length,
-      activeReferrals: referrals.filter((r) => r.status === 'signed_up').length,
-      completedPurchases: referrals.filter((r) => r.status === 'purchased').length,
-      totalRewards: wallet?.totalEarnings || 0,
-    };
-  } catch (error) {
-    console.error('Error calculating referral stats:', error);
-    return {
-      totalReferrals: 0,
-      activeReferrals: 0,
-      completedPurchases: 0,
-      totalRewards: 0,
-    };
-  }
+  return {
+    totalReferrals: referrals.length,
+    activeReferrals: referrals.filter((r) => r.status === 'signed_up').length,
+    completedPurchases: referrals.filter((r) => r.status === 'purchased').length,
+    totalRewards: wallet?.totalEarnings || 0,
+  };
 }

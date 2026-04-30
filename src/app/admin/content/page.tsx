@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAdmin } from '@/components/providers/admin-provider';
 import AdminLayout from '@/components/admin-layout';
-import { listenToSettings, updateSettings, Settings, defaultSettings } from '@/lib/admin-firestore-service';
+import { listenToSettings, updateSettings, Settings, defaultSettings } from '@/lib/admin-supabase-service';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

@@ -1,7 +1,7 @@
 /**
  * REAL-TIME REFERRALS HOOK
  * 
- * Uses Firestore listener to track referral status
+ * Uses Supabase listener to track referral status
  * Instantly updates when purchased/claimed
  * No page refresh needed
  */
@@ -9,7 +9,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ReferralRecord, listenToMyReferrals } from '@/lib/firestore-referral-service';
+import { ReferralRecord, listenToMyReferrals } from '@/lib/supabase-referral-service';
 
 export function useRealtimeReferrals(referrerUid: string | undefined) {
   const [referrals, setReferrals] = useState<ReferralRecord[]>([]);
@@ -32,9 +32,9 @@ export function useRealtimeReferrals(referrerUid: string | undefined) {
 
     setLoading(true);
 
-    // Set up real-time listener to Firestore
+    // Set up real-time listener to Supabase
     const unsubscribe = listenToMyReferrals(referrerUid, (referrals) => {
-      // Update referrals list from Firestore
+      // Update referrals list from Supabase
       setReferrals(referrals);
       setLoading(false);
 

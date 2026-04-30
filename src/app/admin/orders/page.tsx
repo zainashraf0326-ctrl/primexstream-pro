@@ -10,13 +10,12 @@ import {
   listenToOrdersByStatus,
   updateOrderStatus,
   Order,
-} from '@/lib/admin-firestore-service';
+} from '@/lib/admin-supabase-service';
 import { processOrderReward } from '@/lib/order-reward-hook';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Edit3, CheckCircle, AlertCircle, X, Calendar, DollarSign, User, Zap, Search, Settings } from 'lucide-react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase-config';
+import { supabase } from '@/lib/supabase-config';
 
 type FilterStatus = 'pending' | 'approved' | 'rejected';
 
@@ -57,13 +56,15 @@ export default function AdminOrdersPage() {
   useEffect(() => {
     const loadUsers = async () => {
       try {
-        const usersSnap = await getDocs(collection(db, 'users'));
+        const client = supabase;
+        if (!client) return;
+        const { data: usersSnap, error } = await client.from('users').select('id,name,email');
+        if (error) throw error;
         const mapped: Record<string, { name?: string; email?: string }> = {};
-        usersSnap.docs.forEach((snapshotDoc) => {
-          const data = snapshotDoc.data() as any;
-          mapped[snapshotDoc.id] = {
-            name: data.name || data.fullName || data.displayName || '',
-            email: data.email || '',
+        (usersSnap || []).forEach((row: any) => {
+          mapped[row.id] = {
+            name: row.name || '',
+            email: row.email || '',
           };
         });
         setUserLookup(mapped);
@@ -213,7 +214,7 @@ export default function AdminOrdersPage() {
             </Card>
           ) : (
             sortedOrders.map((order, index) => {
-              // Parse date properly from Firestore timestamp
+              // Parse date properly from Supabase timestamp
               let orderDate = new Date();
               if (order.createdAt?.toDate && typeof order.createdAt.toDate === 'function') {
                 orderDate = order.createdAt.toDate();
@@ -305,7 +306,7 @@ export default function AdminOrdersPage() {
 
         {/* Edit Modal */}
         {editingOrder && (() => {
-          // Parse date properly from Firestore timestamp
+          // Parse date properly from Supabase timestamp
           let editOrderDate = new Date();
           if (editingOrder.createdAt?.toDate && typeof editingOrder.createdAt.toDate === 'function') {
             editOrderDate = editingOrder.createdAt.toDate();

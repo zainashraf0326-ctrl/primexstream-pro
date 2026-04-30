@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { listenToSettings, Settings, defaultSettings } from '@/lib/admin-firestore-service';
+import { listenToSettings, Settings, defaultSettings } from '@/lib/admin-supabase-service';
 
 /**
- * Hook to fetch website settings from Firebase
+ * Hook to fetch website settings from Supabase
  * Usage: const settings = useWebsiteSettings();
  */
 export function useWebsiteSettings() {

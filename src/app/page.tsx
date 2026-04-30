@@ -50,9 +50,9 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black relative overflow-hidden pb-24">
+    <div className="min-h-screen relative overflow-hidden pb-24">
       {/* Hero Section */}
-      <section className="pt-20 md:pt-32 pb-20 md:pb-40 px-4 sm:px-6 lg:px-8 relative z-10">
+      <section className="pt-20 md:pt-28 pb-16 md:pb-28 px-4 sm:px-6 lg:px-8 relative z-10">
         <motion.div
           className="max-w-5xl mx-auto text-center"
           variants={containerVariants}
@@ -61,7 +61,7 @@ export default function LandingPage() {
         >
           {/* Badge */}
           <motion.div
-            className="inline-flex items-center gap-2 glass rounded-full px-4 py-2 mb-8"
+            className="inline-flex items-center gap-2 glass rounded-full px-4 py-2 mb-8 shadow-sm"
             variants={itemVariants}
           >
             <Sparkles className="w-4 h-4 text-blue-500" />
@@ -72,21 +72,21 @@ export default function LandingPage() {
 
           {/* Main Heading */}
           <motion.h1
-            className="text-5xl md:text-7xl lg:text-8xl font-bold leading-tight mb-6 text-gray-900 dark:text-white"
+            className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight mb-6 text-slate-900 dark:text-slate-100"
             variants={itemVariants}
           >
             Premium IPTV{' '}
-            <span className="bg-gradient-to-r from-blue-500 via-blue-600 to-cyan-500 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-slate-900 to-slate-600 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
               Made Simple
             </span>
           </motion.h1>
 
           {/* Subheading */}
           <motion.p
-            className="text-xl md:text-2xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-8 leading-relaxed"
+            className="text-lg md:text-xl text-slate-600 dark:text-slate-400 max-w-2xl mx-auto mb-8 leading-relaxed"
             variants={itemVariants}
           >
-            Buy premium IPTV in 3 steps, get instant access, and earn money by referring friends. No hidden charges. No complications.
+            Buy premium IPTV in 3 steps with instant activation and clear pricing. Refer friends and earn rewards without extra complexity.
           </motion.p>
 
           {/* CTA Buttons */}
@@ -96,8 +96,8 @@ export default function LandingPage() {
           >
             <motion.button
               onClick={() => router.push('/login')}
-              className="btn-glass btn-glass-primary rounded-xl px-8 py-4 flex items-center justify-center gap-2"
-              whileHover={{ scale: 1.05, boxShadow: '0 20px 40px rgba(59, 130, 246, 0.3)' }}
+              className="btn-glass btn-glass-primary rounded-xl px-8 py-4 flex items-center justify-center gap-2 shadow-sm"
+              whileHover={{ scale: 1.03, boxShadow: '0 12px 30px rgba(15, 23, 42, 0.18)' }}
               whileTap={{ scale: 0.95 }}
             >
               Start Now
@@ -105,8 +105,8 @@ export default function LandingPage() {
             </motion.button>
             <motion.button
               onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}
-              className="btn-glass btn-glass-secondary rounded-xl px-8 py-4"
-              whileHover={{ scale: 1.05, backgroundColor: 'rgba(255,255,255,0.3)' }}
+              className="btn-glass btn-glass-secondary rounded-xl px-8 py-4 shadow-sm"
+              whileHover={{ scale: 1.03, backgroundColor: 'rgba(255,255,255,0.95)' }}
               whileTap={{ scale: 0.95 }}
             >
               How It Works
@@ -118,16 +118,16 @@ export default function LandingPage() {
             className="flex flex-col sm:flex-row items-center justify-center gap-8 text-sm"
             variants={itemVariants}
           >
-            <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
-              <Shield className="w-5 h-5 text-blue-500" />
+            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+              <Shield className="w-5 h-5 text-slate-700 dark:text-slate-300" />
               <span>256-bit Secure</span>
             </div>
-            <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
-              <Users className="w-5 h-5 text-blue-500" />
+            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+              <Users className="w-5 h-5 text-slate-700 dark:text-slate-300" />
               <span>50K+ Active Users</span>
             </div>
-            <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
-              <Rocket className="w-5 h-5 text-blue-500" />
+            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+              <Rocket className="w-5 h-5 text-slate-700 dark:text-slate-300" />
               <span>Lightning Fast</span>
             </div>
           </motion.div>
@@ -141,11 +141,11 @@ export default function LandingPage() {
           whileInView="visible"
           viewport={{ once: true }}
         >
-          <div className="glass rounded-3xl p-2 md:p-4 backdrop-blur-xl">
-            <div className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 dark:from-blue-500/5 dark:to-cyan-500/5 rounded-2xl aspect-video flex items-center justify-center">
+          <div className="glass rounded-3xl p-2 md:p-4">
+            <div className="bg-gradient-to-br from-slate-100 to-white dark:from-slate-900 dark:to-slate-800 rounded-2xl aspect-video flex items-center justify-center">
               <div className="text-center">
-                <Zap className="w-20 h-20 text-blue-500/50 mx-auto mb-4 animate-pulse-glow" />
-                <p className="text-gray-600 dark:text-gray-400">Premium IPTV Dashboard Preview</p>
+                <Zap className="w-20 h-20 text-slate-500/60 mx-auto mb-4 animate-pulse-glow" />
+                <p className="text-slate-600 dark:text-slate-400">Premium IPTV Dashboard Preview</p>
               </div>
             </div>
           </div>
@@ -153,7 +153,7 @@ export default function LandingPage() {
       </section>
 
       {/* Features Section */}
-      <section id="how-it-works" className="py-20 md:py-32 px-4 sm:px-6 lg:px-8 relative z-10">
+      <section id="how-it-works" className="py-16 md:py-24 px-4 sm:px-6 lg:px-8 relative z-10">
         <div className="max-w-5xl mx-auto">
           <motion.div
             className="text-center mb-16"
@@ -163,13 +163,13 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             <motion.h2
-              className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4"
+              className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-slate-100 mb-4"
               variants={itemVariants}
             >
               Why Choose Us?
             </motion.h2>
             <motion.p
-              className="text-lg text-gray-600 dark:text-gray-400"
+              className="text-lg text-slate-600 dark:text-slate-400"
               variants={itemVariants}
             >
               Industry-leading features designed for you
@@ -204,19 +204,19 @@ export default function LandingPage() {
               return (
                 <motion.div
                   key={i}
-                  className="glass rounded-2xl p-8 cursor-pointer"
+                className="glass rounded-2xl p-8 cursor-pointer"
                   variants={itemVariants}
                   whileHover={{
                     scale: 1.05,
-                    backgroundColor: 'rgba(255,255,255,0.3)',
+                    backgroundColor: 'rgba(255,255,255,0.96)',
                   }}
                   transition={{ duration: 0.3 }}
                 >
-                  <Icon className="w-10 h-10 text-blue-500 mb-4" />
-                  <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                  <Icon className="w-10 h-10 text-slate-700 dark:text-slate-300 mb-4" />
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">
                     {feature.title}
                   </h3>
-                  <p className="text-gray-600 dark:text-gray-400">
+                  <p className="text-slate-600 dark:text-slate-400">
                     {feature.description}
                   </p>
                 </motion.div>
@@ -227,7 +227,7 @@ export default function LandingPage() {
       </section>
 
       {/* 3 Steps Section */}
-      <section className="py-20 md:py-32 px-4 sm:px-6 lg:px-8 bg-white/40 dark:bg-black/40 relative z-10 backdrop-blur-sm">
+      <section className="py-16 md:py-24 px-4 sm:px-6 lg:px-8 bg-white/40 dark:bg-slate-900/40 relative z-10 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto">
           <motion.div
             className="text-center mb-16"
@@ -237,13 +237,13 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             <motion.h2
-              className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4"
+              className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-slate-100 mb-4"
               variants={itemVariants}
             >
               3 Simple Steps
             </motion.h2>
             <motion.p
-              className="text-lg text-gray-600 dark:text-gray-400"
+              className="text-lg text-slate-600 dark:text-slate-400"
               variants={itemVariants}
             >
               Get premium IPTV access in just 3 minutes
@@ -280,13 +280,13 @@ export default function LandingPage() {
                 variants={itemVariants}
                 whileHover={{ translateY: -8 }}
               >
-                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold text-2xl mb-6">
+                <div className="w-14 h-14 rounded-full bg-slate-900 dark:bg-white flex items-center justify-center text-white dark:text-slate-900 font-bold text-2xl mb-6">
                   {step.number}
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">
+                <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-3">
                   {step.title}
                 </h3>
-                <p className="text-gray-600 dark:text-gray-400">
+                <p className="text-slate-600 dark:text-slate-400">
                   {step.description}
                 </p>
               </motion.div>
@@ -296,24 +296,24 @@ export default function LandingPage() {
       </section>
 
       {/* Final CTA Section */}
-      <section className="py-20 md:py-32 px-4 sm:px-6 lg:px-8 relative z-10">
+      <section className="py-16 md:py-24 px-4 sm:px-6 lg:px-8 relative z-10">
         <motion.div
-          className="max-w-4xl mx-auto glass rounded-3xl px-8 md:px-12 py-12 md:py-20 text-center"
+          className="max-w-4xl mx-auto glass rounded-3xl px-8 md:px-12 py-12 md:py-16 text-center"
           initial={{ opacity: 0, scale: 0.9 }}
           whileInView={{ opacity: 1, scale: 1 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
         >
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-6">
+          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-slate-100 mb-6">
             Ready to Get Started?
           </h2>
-          <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
+          <p className="text-lg text-slate-600 dark:text-slate-400 mb-8">
             Join thousands of satisfied customers and get premium IPTV today.
           </p>
           <motion.button
             onClick={() => router.push('/login')}
-            className="btn-glass btn-glass-primary rounded-xl px-8 py-4 flex items-center justify-center gap-2 mx-auto"
-            whileHover={{ scale: 1.05, boxShadow: '0 20px 40px rgba(59, 130, 246, 0.3)' }}
+            className="btn-glass btn-glass-primary rounded-xl px-8 py-4 flex items-center justify-center gap-2 mx-auto shadow-sm"
+            whileHover={{ scale: 1.03, boxShadow: '0 12px 30px rgba(15, 23, 42, 0.18)' }}
             whileTap={{ scale: 0.95 }}
           >
             Create Account Now
@@ -323,7 +323,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-white/10 dark:border-white/5 py-12 px-4 sm:px-6 lg:px-8 relative z-10">
+      <footer className="border-t border-slate-200 dark:border-slate-800 py-12 px-4 sm:px-6 lg:px-8 relative z-10">
         <div className="max-w-5xl mx-auto">
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>

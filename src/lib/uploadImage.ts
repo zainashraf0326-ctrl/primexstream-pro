@@ -1,6 +1,4 @@
 import { supabase, isSupabaseConfigured } from './supabase-config';
-import { db } from './firebase-config';
-import { collection, addDoc, query, where, getDocs, doc, deleteDoc } from 'firebase/firestore';
 import { deleteImageFromStorage } from './storage-service';
 
 interface UploadResult {
@@ -54,22 +52,25 @@ export async function uploadImage(
       throw new Error('Failed to get public URL');
     }
 
-    // Save to Firestore
-    const uploadsRef = collection(db, 'uploads');
-    const docRef = await addDoc(uploadsRef, {
-      userId,
-      fileName,
-      imageUrl: publicUrl,
-      fileType: file.type,
-      fileSize: file.size,
-      createdAt: new Date().toISOString(),
-      ...metadata,
-    });
+    const { data: uploadRow, error: rowError } = await supabase
+      .from('uploads')
+      .insert({
+        user_id: userId,
+        file_name: fileName,
+        image_url: publicUrl,
+        file_type: file.type,
+        file_size: file.size,
+        metadata: metadata || {},
+      })
+      .select('id')
+      .single();
+
+    if (rowError) throw rowError;
 
     return {
       success: true,
       url: publicUrl,
-      docId: docRef.id,
+      docId: uploadRow.id,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
@@ -83,13 +84,13 @@ export async function uploadImage(
 
 export async function getUserUploads(userId: string) {
   try {
-    const uploadsRef = collection(db, 'uploads');
-    const q = query(uploadsRef, where('userId', '==', userId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const { data, error } = await supabase
+      .from('uploads')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data || []).map(mapUploadRow);
   } catch (error) {
     console.error('Get uploads failed:', error);
     return [];
@@ -98,12 +99,12 @@ export async function getUserUploads(userId: string) {
 
 export async function getAllUploads() {
   try {
-    const uploadsRef = collection(db, 'uploads');
-    const snapshot = await getDocs(uploadsRef);
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const { data, error } = await supabase
+      .from('uploads')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data || []).map(mapUploadRow);
   } catch (error) {
     console.error('Get all uploads failed:', error);
     return [];
@@ -112,9 +113,8 @@ export async function getAllUploads() {
 
 export async function deleteUploadImage(uploadId: string, fileName: string): Promise<boolean> {
   try {
-    // Delete from Firestore
-    const uploadRef = doc(db, 'uploads', uploadId);
-    await deleteDoc(uploadRef);
+    const { error } = await supabase.from('uploads').delete().eq('id', uploadId);
+    if (error) throw error;
 
     // Delete from Supabase Storage
     await deleteImageFromStorage(fileName);
@@ -124,4 +124,17 @@ export async function deleteUploadImage(uploadId: string, fileName: string): Pro
     console.error('Delete upload failed:', error);
     return false;
   }
+}
+
+function mapUploadRow(row: any) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    fileName: row.file_name,
+    imageUrl: row.image_url,
+    fileType: row.file_type,
+    fileSize: row.file_size,
+    createdAt: row.created_at,
+    ...(row.metadata || {}),
+  };
 }

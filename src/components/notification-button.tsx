@@ -7,12 +7,19 @@ import {
   markNotificationAsRead,
   deleteNotification,
   markAllNotificationsAsRead,
-} from '@/lib/firestore-notifications';
+} from '@/lib/supabase-notifications';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
 interface NotificationButtonProps {
   userId: string | undefined;
+}
+
+function getNotificationDate(value: unknown) {
+  if (!value) return new Date();
+  if (typeof (value as any).toDate === 'function') return (value as any).toDate();
+  if (value instanceof Date) return value;
+  return new Date(value as string);
 }
 
 export function NotificationButton({ userId }: NotificationButtonProps) {
@@ -143,10 +150,10 @@ export function NotificationButton({ userId }: NotificationButtonProps) {
                         </p>
                         <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
                           {(() => {
-                            const dateValue = notif.createdAt.toDate ? notif.createdAt.toDate() : (notif.createdAt instanceof Date ? notif.createdAt : new Date());
+                            const dateValue = getNotificationDate(notif.createdAt);
                             return dateValue.toLocaleDateString();
                           })()} {(() => {
-                            const dateValue = notif.createdAt.toDate ? notif.createdAt.toDate() : (notif.createdAt instanceof Date ? notif.createdAt : new Date());
+                            const dateValue = getNotificationDate(notif.createdAt);
                             return dateValue.toLocaleTimeString([], {
                               hour: '2-digit',
                               minute: '2-digit',

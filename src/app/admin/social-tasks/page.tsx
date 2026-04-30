@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAdmin } from '@/components/providers/admin-provider';
 import AdminLayout from '@/components/admin-layout';
@@ -8,219 +8,208 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Download,
-  MessageSquare,
-  Youtube,
-  Instagram,
-  Facebook,
-  Mail,
-  Send,
-  Music2,
-  Archive,
   AlertCircle,
+  CheckCircle2,
+  Clock,
+  KeyRound,
+  RefreshCcw,
+  ShieldAlert,
+  Smartphone,
+  XCircle,
 } from 'lucide-react';
-import { db } from '@/lib/firebase-config';
+import { supabase } from '@/lib/supabase-config';
 import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  doc,
-  updateDoc,
-  getDocs,
-} from 'firebase/firestore';
-import {
-  notifySocialTaskApproved,
-  notifySocialTaskRejected,
-  addWalletCredit,
-} from '@/lib/firestore-notifications';
+  ADMIN_APP_MAX_TRIES,
+  ADMIN_APP_TASK_TITLE,
+  approveAdminAppTask,
+  getAllAdminAppTaskSubmissions,
+  rejectAdminAppTask,
+  type AdminAppTaskSubmission,
+} from '@/lib/admin-app-task';
 
-interface SocialTaskPlatform {
-  platform: string;
-  username: string;
-  proofFileName: string;
-}
-
-interface SocialTaskSubmission {
-  id: string;
-  userId: string;
-  userName: string;
-  userEmail: string;
-  platforms: SocialTaskPlatform[];
-  status: string;
-  createdAt: string;
-  approvalStatus: 'pending' | 'approved' | 'rejected';
-  adminNotes: string;
-  reward: {
-    freeAccess: string;
-    walletCredit: number;
-  } | null;
-}
-
-const platformIcons = {
-  youtube: { icon: Youtube, color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20' },
-  instagram: { icon: Instagram, color: 'text-pink-600', bg: 'bg-pink-50 dark:bg-pink-900/20' },
-  tiktok: { icon: Music2, color: 'text-slate-900 dark:text-white', bg: 'bg-slate-50 dark:bg-slate-800' },
-  facebook: { icon: Facebook, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20' },
-  x: { icon: Mail, color: 'text-sky-600', bg: 'bg-sky-50 dark:bg-sky-900/20' },
-  telegram: { icon: Send, color: 'text-cyan-600', bg: 'bg-cyan-50 dark:bg-cyan-900/20' },
-};
+type FilterStatus = 'all' | 'pending' | 'approved' | 'rejected';
 
 export default function SocialTasksAdminPage() {
   const { user, isLoading } = useAdmin();
   const router = useRouter();
-  const [submissions, setSubmissions] = useState<SocialTaskSubmission[]>([]);
-  const [filteredSubmissions, setFilteredSubmissions] = useState<SocialTaskSubmission[]>([]);
+  const [submissions, setSubmissions] = useState<AdminAppTaskSubmission[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  const [filterStatus, setFilterStatus] = useState<FilterStatus>('pending');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | null>(null);
-  const [adminNotesText, setAdminNotesText] = useState('');
+  const [message, setMessage] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+  const [reviewForm, setReviewForm] = useState({
+    adminNotes: '',
+    username: '',
+    password: '',
+    rejectionReason: '',
+  });
 
-  // Check admin access
   useEffect(() => {
     if (isLoading) return;
     if (!user) {
       router.push('/admin/login');
     }
-  }, [isLoading, user, router]);
+  }, [isLoading, router, user]);
 
-  // Fetch social task submissions
   useEffect(() => {
     if (!user) return;
 
-    const submissionsRef = collection(db, 'socialTaskSubmissions');
-    const q = query(submissionsRef);
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const data: SocialTaskSubmission[] = [];
-        snapshot.forEach((doc) => {
-          data.push({
-            id: doc.id,
-            ...(doc.data() as Omit<SocialTaskSubmission, 'id'>),
+    let active = true;
+    const load = async () => {
+      try {
+        const rows = await getAllAdminAppTaskSubmissions();
+        if (active) {
+          setSubmissions(rows);
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Error loading admin app tasks:', error);
+        if (active) {
+          setLoading(false);
+          setMessage({
+            type: 'error',
+            text: 'Could not load task submissions right now.',
           });
-        });
-        // Sort by newest first
-        data.sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setSubmissions(data);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Error fetching submissions:', error);
-        setLoading(false);
+        }
       }
-    );
+    };
 
-    return () => unsubscribe();
+    void load();
+
+    const channel = supabase
+      .channel('admin-admin-app-task-watch')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'social_task_submissions' },
+        load
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
   }, [user]);
 
-  // Filter submissions
-  useEffect(() => {
-    if (filterStatus === 'all') {
-      setFilteredSubmissions(submissions);
-    } else {
-      setFilteredSubmissions(
-        submissions.filter((sub) => sub.approvalStatus === filterStatus)
-      );
-    }
-  }, [submissions, filterStatus]);
+  const stats = useMemo(
+    () => ({
+      total: submissions.length,
+      pending: submissions.filter((item) => item.approvalStatus === 'pending').length,
+      approved: submissions.filter((item) => item.approvalStatus === 'approved').length,
+      rejected: submissions.filter((item) => item.approvalStatus === 'rejected').length,
+    }),
+    [submissions]
+  );
 
-  // Approve submission
-  const handleApprove = async (submissionId: string) => {
-    setProcessingId(submissionId);
-    try {
-      // Find submission to get userId and platforms
-      const submission = submissions.find((s) => s.id === submissionId);
-      if (!submission) {
-        alert('Submission not found');
-        setProcessingId(null);
-        return;
-      }
+  const filteredSubmissions = useMemo(() => {
+    if (filterStatus === 'all') return submissions;
+    return submissions.filter((item) => item.approvalStatus === filterStatus);
+  }, [filterStatus, submissions]);
 
-      const submissionRef = doc(db, 'socialTaskSubmissions', submissionId);
-      const walletCredit = 20;
+  const attemptMeta = useMemo(() => {
+    const perUser = new Map<string, number>();
+    const perSubmission = new Map<string, number>();
 
-      // Update submission status
-      await updateDoc(submissionRef, {
-        approvalStatus: 'approved',
-        adminNotes: adminNotesText,
-        reward: {
-          freeAccess: '1 month',
-          walletCredit: walletCredit,
-        },
-        approvedAt: new Date().toISOString(),
+    [...submissions]
+      .sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      )
+      .forEach((submission) => {
+        const nextCount = (perUser.get(submission.userId) || 0) + 1;
+        perUser.set(submission.userId, nextCount);
+        perSubmission.set(submission.id, nextCount);
       });
 
-      // Add wallet credit to user
-      const walletAdded = await addWalletCredit(
-        submission.userId,
-        walletCredit,
-        `Social task approved (${submission.platforms.map((p) => p.platform).join(', ')})`,
-        submissionId
-      );
+    return perSubmission;
+  }, [submissions]);
 
-      // Send notification to user
-      if (walletAdded) {
-        const platformNames = submission.platforms.map((p) => p.platform).join(', ');
-        await notifySocialTaskApproved(submission.userId, {
-          platforms: submission.platforms.map((p) => p.platform),
-          walletCredit: walletCredit,
-          freeAccess: '1 month',
-        });
-      }
+  const selectedSubmission =
+    submissions.find((submission) => submission.id === selectedId) || null;
 
-      alert('✅ Submission approved! User notified with wallet credit');
-      setSelectedSubmissionId(null);
-      setAdminNotesText('');
+  const handleSelect = (submission: AdminAppTaskSubmission) => {
+    if (selectedId === submission.id) {
+      setSelectedId(null);
+      return;
+    }
+
+    setSelectedId(submission.id);
+    setReviewForm({
+      adminNotes: submission.adminNotes || '',
+      username: submission.credentials?.username || '',
+      password: submission.credentials?.password || '',
+      rejectionReason:
+        submission.approvalStatus === 'rejected' ? submission.adminNotes || '' : '',
+    });
+  };
+
+  const handleApprove = async (submission: AdminAppTaskSubmission) => {
+    if (!reviewForm.username.trim() || !reviewForm.password.trim()) {
+      setMessage({
+        type: 'error',
+        text: 'Username and password are required before approval.',
+      });
+      return;
+    }
+
+    setProcessingId(submission.id);
+    setMessage(null);
+
+    try {
+      await approveAdminAppTask(submission, {
+        username: reviewForm.username.trim(),
+        password: reviewForm.password.trim(),
+        adminNotes: reviewForm.adminNotes.trim(),
+      });
+
+      setMessage({
+        type: 'success',
+        text: 'Task approved and credentials saved for the user.',
+      });
+      setSelectedId(null);
     } catch (error) {
-      console.error('Error approving submission:', error);
-      alert('Error approving submission');
+      console.error('Error approving admin app task:', error);
+      setMessage({
+        type: 'error',
+        text: 'Could not approve this task right now.',
+      });
     } finally {
       setProcessingId(null);
     }
   };
 
-  // Reject submission
-  const handleReject = async (submissionId: string) => {
-    if (!window.confirm('Are you sure you want to reject this submission?')) return;
+  const handleReject = async (submission: AdminAppTaskSubmission) => {
+    if (!reviewForm.rejectionReason.trim()) {
+      setMessage({
+        type: 'error',
+        text: 'Please write a rejection reason so the user knows what to fix.',
+      });
+      return;
+    }
 
-    setProcessingId(submissionId);
+    setProcessingId(submission.id);
+    setMessage(null);
+
     try {
-      // Find submission to get userId and platforms
-      const submission = submissions.find((s) => s.id === submissionId);
-      if (!submission) {
-        alert('Submission not found');
-        setProcessingId(null);
-        return;
-      }
-
-      const submissionRef = doc(db, 'socialTaskSubmissions', submissionId);
-      await updateDoc(submissionRef, {
-        approvalStatus: 'rejected',
-        adminNotes: adminNotesText || 'Rejected by admin',
-        rejectedAt: new Date().toISOString(),
+      await rejectAdminAppTask(submission, {
+        reason: reviewForm.rejectionReason.trim(),
       });
 
-      // Send notification to user with reason
-      await notifySocialTaskRejected(submission.userId, {
-        platforms: submission.platforms.map((p) => p.platform),
-        reason: adminNotesText || 'No specific reason provided. Please contact support.',
+      setMessage({
+        type: 'success',
+        text: 'Task rejected and the reason was saved for the user.',
       });
-
-      alert('❌ Submission rejected. User notified.');
-      setSelectedSubmissionId(null);
-      setAdminNotesText('');
+      setSelectedId(null);
     } catch (error) {
-      console.error('Error rejecting submission:', error);
-      alert('Error rejecting submission');
+      console.error('Error rejecting admin app task:', error);
+      setMessage({
+        type: 'error',
+        text: 'Could not reject this task right now.',
+      });
     } finally {
       setProcessingId(null);
     }
@@ -229,306 +218,334 @@ export default function SocialTasksAdminPage() {
   if (isLoading || loading) {
     return (
       <AdminLayout>
-        <div className="flex items-center justify-center min-h-screen">
+        <div className="flex min-h-screen items-center justify-center">
           <div className="text-center">
-            <div className="w-8 h-8 rounded-full border-4 border-slate-300 border-t-emerald-600 animate-spin mx-auto mb-4"></div>
-            <p className="text-slate-600 dark:text-slate-400">Loading submissions...</p>
+            <div className="mx-auto mb-4 h-8 w-8 rounded-full border-4 border-slate-300 border-t-cyan-600 animate-spin" />
+            <p className="text-slate-600 dark:text-slate-400">
+              Loading admin app tasks...
+            </p>
           </div>
         </div>
       </AdminLayout>
     );
   }
 
-  const stats = {
-    total: submissions.length,
-    pending: submissions.filter((s) => s.approvalStatus === 'pending').length,
-    approved: submissions.filter((s) => s.approvalStatus === 'approved').length,
-    rejected: submissions.filter((s) => s.approvalStatus === 'rejected').length,
-  };
-
   return (
     <AdminLayout>
-      <div className="max-w-7xl mx-auto p-6">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">
-            Social Tasks Verification
-          </h1>
-          <p className="text-slate-600 dark:text-slate-400">
-            Review and approve/reject user social media task submissions
-          </p>
+      <div className="mx-auto max-w-7xl p-6 space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
+              Admin App Task Review
+            </h1>
+            <p className="mt-2 text-slate-600 dark:text-slate-400">
+              Review account email and UID, then approve with credentials or reject with a reason.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 dark:border-cyan-800 dark:bg-cyan-900/20">
+            <div className="flex items-center gap-2 text-cyan-700 dark:text-cyan-300">
+              <Smartphone className="h-4 w-4" />
+              <span className="text-sm font-semibold">{ADMIN_APP_TASK_TITLE}</span>
+            </div>
+          </div>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        {message && (
+          <div
+            className={`rounded-xl border p-4 text-sm ${
+              message.type === 'success'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300'
+                : 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300'
+            }`}
+          >
+            {message.text}
+          </div>
+        )}
+
+        <div className="grid gap-4 md:grid-cols-4">
           <Card className="p-4 text-center glass glass-light dark:glass">
-            <div className="text-2xl font-bold text-slate-900 dark:text-white">
-              {stats.total}
-            </div>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-              Total Submissions
-            </p>
+            <p className="text-2xl font-bold text-slate-900 dark:text-white">{stats.total}</p>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Total</p>
           </Card>
-
-          <Card className="p-4 text-center glass glass-light dark:glass border-orange-200 dark:border-orange-800">
-            <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-              {stats.pending}
-            </div>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-              Pending Review
-            </p>
+          <Card className="p-4 text-center glass glass-light dark:glass border-amber-200 dark:border-amber-800">
+            <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{stats.pending}</p>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Pending</p>
           </Card>
-
-          <Card className="p-4 text-center glass glass-light dark:glass border-green-200 dark:border-green-800">
-            <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-              {stats.approved}
-            </div>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-              Approved
-            </p>
+          <Card className="p-4 text-center glass glass-light dark:glass border-emerald-200 dark:border-emerald-800">
+            <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{stats.approved}</p>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Approved</p>
           </Card>
-
           <Card className="p-4 text-center glass glass-light dark:glass border-red-200 dark:border-red-800">
-            <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-              {stats.rejected}
-            </div>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-              Rejected
-            </p>
+            <p className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.rejected}</p>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Rejected</p>
           </Card>
         </div>
 
-        {/* Filter Buttons */}
-        <div className="flex gap-2 mb-6 flex-wrap">
-          {(['all', 'pending', 'approved', 'rejected'] as const).map((status) => (
+        <div className="flex flex-wrap gap-2">
+          {(['all', 'pending', 'approved', 'rejected'] as FilterStatus[]).map((status) => (
             <Button
               key={status}
+              type="button"
               onClick={() => setFilterStatus(status)}
               variant={filterStatus === status ? 'primary' : 'outline'}
-              className="gap-2 capitalize"
+              className="capitalize"
             >
-              {status === 'all' && 'All'}
-              {status === 'pending' && (
-                <>
-                  <Clock className="w-4 h-4" />
-                  Pending
-                </>
-              )}
-              {status === 'approved' && (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  Approved
-                </>
-              )}
-              {status === 'rejected' && (
-                <>
-                  <XCircle className="w-4 h-4" />
-                  Rejected
-                </>
-              )}
+              {status}
             </Button>
           ))}
         </div>
 
-        {/* Submissions List */}
         {filteredSubmissions.length === 0 ? (
           <Card className="p-12 text-center glass glass-light dark:glass">
-            <Archive className="w-12 h-12 text-slate-400 mx-auto mb-4 opacity-50" />
             <p className="text-slate-600 dark:text-slate-400">
-              No {filterStatus !== 'all' ? filterStatus : ''} submissions found
+              No {filterStatus === 'all' ? '' : filterStatus} admin app tasks found.
             </p>
           </Card>
         ) : (
           <div className="grid gap-4">
-            {filteredSubmissions.map((submission) => (
-              <div
-                key={submission.id}
-                className={`p-6 glass glass-light dark:glass cursor-pointer transition-all hover:shadow-lg rounded-lg border ${
-                  submission.approvalStatus === 'pending'
-                    ? 'border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-900/10'
-                    : submission.approvalStatus === 'approved'
-                      ? 'border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/10'
-                      : 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10'
-                } ${selectedSubmissionId === submission.id ? 'ring-2 ring-blue-500' : ''}`}
-                onClick={() =>
-                  setSelectedSubmissionId(
-                    selectedSubmissionId === submission.id ? null : submission.id
-                  )
-                }
-              >
-                {/* Header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                        {submission.userName}
-                      </h3>
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-semibold ${
-                          submission.approvalStatus === 'pending'
-                            ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
-                            : submission.approvalStatus === 'approved'
-                              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-                              : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-                        }`}
-                      >
-                        {submission.approvalStatus.toUpperCase()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400">
-                      Email: {submission.userEmail}
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
-                      Submitted {new Date(submission.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
+            {filteredSubmissions.map((submission) => {
+              const attemptNumber =
+                Number(submission.reward?.tryNumber) ||
+                attemptMeta.get(submission.id) ||
+                1;
+              const isSelected = selectedId === submission.id;
 
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {submission.approvalStatus === 'pending' && (
-                      <Clock className="w-5 h-5 text-orange-600" />
-                    )}
-                    {submission.approvalStatus === 'approved' && (
-                      <CheckCircle2 className="w-5 h-5 text-green-600" />
-                    )}
-                    {submission.approvalStatus === 'rejected' && (
-                      <XCircle className="w-5 h-5 text-red-600" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Platforms */}
-                <div className="mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
-                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-                    Platforms ({submission.platforms.length}):
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {submission.platforms.map((platform, idx) => {
-                      const platformConfig = platformIcons[platform.platform as keyof typeof platformIcons];
-                      const Icon = platformConfig?.icon || Mail;
-
-                      return (
-                        <div
-                          key={idx}
-                          className={`p-3 rounded-lg flex items-center gap-2 ${platformConfig?.bg || 'bg-slate-50 dark:bg-slate-800'}`}
+              return (
+                <Card
+                  key={submission.id}
+                  className={`p-5 glass glass-light dark:glass border transition-all ${
+                    submission.approvalStatus === 'pending'
+                      ? 'border-amber-200 dark:border-amber-800'
+                      : submission.approvalStatus === 'approved'
+                      ? 'border-emerald-200 dark:border-emerald-800'
+                      : 'border-red-200 dark:border-red-800'
+                  } ${isSelected ? 'ring-2 ring-cyan-500' : ''}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                          {submission.userName}
+                        </h3>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            submission.approvalStatus === 'pending'
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                              : submission.approvalStatus === 'approved'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                              : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                          }`}
                         >
-                          <Icon className={`w-5 h-5 ${platformConfig?.color || 'text-slate-600'}`} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                              {platform.platform}
-                            </p>
-                            <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                              @{platform.username}
+                          {submission.approvalStatus}
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                          Try {attemptNumber}/{ADMIN_APP_MAX_TRIES}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="rounded-xl border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60">
+                          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                            Account email
+                          </p>
+                          <p className="mt-1 text-sm text-slate-900 dark:text-white">
+                            {submission.details.accountEmail || 'Not provided'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60">
+                          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                            Account UID
+                          </p>
+                          <p className="mt-1 text-sm text-slate-900 dark:text-white">
+                            {submission.details.accountUid || 'Not provided'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 text-xs text-slate-500 dark:text-slate-400">
+                        <span>Email: {submission.userEmail || 'No email'}</span>
+                        <span>Submitted: {new Date(submission.createdAt).toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-end gap-2">
+                      {submission.approvalStatus === 'pending' && (
+                        <Clock className="h-5 w-5 text-amber-500" />
+                      )}
+                      {submission.approvalStatus === 'approved' && (
+                        <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                      )}
+                      {submission.approvalStatus === 'rejected' && (
+                        <XCircle className="h-5 w-5 text-red-500" />
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => handleSelect(submission)}
+                      >
+                        {isSelected ? 'Close review' : 'Open review'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {isSelected && (
+                    <div className="mt-5 space-y-4 border-t border-slate-200 pt-5 dark:border-slate-700">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <label className="mb-2 block text-xs font-semibold text-slate-500 dark:text-slate-400">
+                            Username to give user
+                          </label>
+                          <Input
+                            value={reviewForm.username}
+                            onChange={(event) =>
+                              setReviewForm((prev) => ({
+                                ...prev,
+                                username: event.target.value,
+                              }))
+                            }
+                            placeholder="Enter username"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-semibold text-slate-500 dark:text-slate-400">
+                            Password to give user
+                          </label>
+                          <Input
+                            value={reviewForm.password}
+                            onChange={(event) =>
+                              setReviewForm((prev) => ({
+                                ...prev,
+                                password: event.target.value,
+                              }))
+                            }
+                            placeholder="Enter password"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold text-slate-500 dark:text-slate-400">
+                          Admin notes
+                        </label>
+                        <textarea
+                          value={reviewForm.adminNotes}
+                          onChange={(event) =>
+                            setReviewForm((prev) => ({
+                              ...prev,
+                              adminNotes: event.target.value,
+                            }))
+                          }
+                          rows={3}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                          placeholder="Optional note for your records"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold text-slate-500 dark:text-slate-400">
+                          Rejection reason
+                        </label>
+                        <textarea
+                          value={reviewForm.rejectionReason}
+                          onChange={(event) =>
+                            setReviewForm((prev) => ({
+                              ...prev,
+                              rejectionReason: event.target.value,
+                            }))
+                          }
+                          rows={3}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-red-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                          placeholder="Explain what was fake or missing"
+                        />
+                      </div>
+
+                      {submission.approvalStatus === 'approved' && submission.credentials && (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800 dark:bg-emerald-900/20">
+                          <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                            <KeyRound className="h-4 w-4" />
+                            <p className="text-sm font-semibold">
+                              Current credentials already saved
                             </p>
                           </div>
-                          {platform.proofFileName && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="gap-1 flex-shrink-0"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // TODO: Download/view proof file
-                                alert(`View proof: ${platform.proofFileName}`);
-                              }}
-                            >
-                              <Download className="w-3 h-3" />
-                              Proof
-                            </Button>
-                          )}
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <div>
+                              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                                Username
+                              </p>
+                              <p className="mt-1 text-sm text-slate-900 dark:text-white">
+                                {submission.credentials.username}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                                Password
+                              </p>
+                              <p className="mt-1 text-sm text-slate-900 dark:text-white">
+                                {submission.credentials.password}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                      )}
 
-                {/* Expandable Details */}
-                {selectedSubmissionId === submission.id && (
-                  <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-700 animate-fade-in-up">
-                    {/* Admin Notes */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                        Admin Notes
-                      </label>
-                      <textarea
-                        value={
-                          selectedSubmissionId === submission.id
-                            ? adminNotesText
-                            : submission.adminNotes
-                        }
-                        onChange={(e) => setAdminNotesText(e.target.value)}
-                        placeholder="Add notes about this submission..."
-                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm outline-none focus:border-blue-500 resize-none"
-                        rows={3}
-                      />
-                    </div>
+                      {submission.approvalStatus === 'rejected' && submission.adminNotes && (
+                        <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">
+                          <div className="flex items-center gap-2 text-red-700 dark:text-red-300">
+                            <ShieldAlert className="h-4 w-4" />
+                            <p className="text-sm font-semibold">
+                              Last rejection reason
+                            </p>
+                          </div>
+                          <p className="mt-3 text-sm text-red-700 dark:text-red-300">
+                            {submission.adminNotes}
+                          </p>
+                        </div>
+                      )}
 
-                    {/* Action Buttons */}
-                    {submission.approvalStatus === 'pending' && (
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-3">
                         <Button
-                          onClick={() => handleApprove(submission.id)}
+                          type="button"
                           disabled={processingId === submission.id}
-                          className="flex-1 bg-green-600 hover:bg-green-700 text-white gap-2"
+                          onClick={() => handleApprove(submission)}
+                          className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
                         >
                           {processingId === submission.id ? (
                             <>
-                              <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
-                              Processing...
+                              <RefreshCcw className="h-4 w-4 animate-spin" />
+                              Saving...
                             </>
                           ) : (
                             <>
-                              <CheckCircle2 className="w-4 h-4" />
-                              Approve & Give Reward
+                              <CheckCircle2 className="h-4 w-4" />
+                              Approve task
                             </>
                           )}
                         </Button>
                         <Button
-                          onClick={() => handleReject(submission.id)}
+                          type="button"
                           disabled={processingId === submission.id}
                           variant="outline"
-                          className="flex-1 gap-2 text-red-600 border-red-300 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20"
+                          className="gap-2 border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
+                          onClick={() => handleReject(submission)}
                         >
                           {processingId === submission.id ? (
                             <>
-                              <div className="w-4 h-4 rounded-full border-2 border-red-600 border-t-transparent animate-spin"></div>
-                              Processing...
+                              <RefreshCcw className="h-4 w-4 animate-spin" />
+                              Saving...
                             </>
                           ) : (
                             <>
-                              <XCircle className="w-4 h-4" />
-                              Reject
+                              <XCircle className="h-4 w-4" />
+                              Reject task
                             </>
                           )}
                         </Button>
                       </div>
-                    )}
-
-                    {submission.approvalStatus === 'approved' && submission.reward && (
-                      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3">
-                        <p className="text-sm font-semibold text-green-700 dark:text-green-300 mb-2">
-                          ✓ Reward Given:
-                        </p>
-                        <ul className="text-xs text-green-600 dark:text-green-400 space-y-1">
-                          <li>• Free access: {submission.reward.freeAccess}</li>
-                          <li>• Wallet credit: ₹{submission.reward.walletCredit}</li>
-                        </ul>
-                      </div>
-                    )}
-
-                    {submission.adminNotes && (
-                      <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-3">
-                        <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                          Admin Notes:
-                        </p>
-                        <p className="text-sm text-slate-700 dark:text-slate-300">
-                          {submission.adminNotes}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>

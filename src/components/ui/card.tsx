@@ -1,17 +1,18 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { HTMLAttributes, ReactNode } from 'react';
 
-interface CardProps {
+interface CardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
   className?: string;
   hover?: boolean;
 }
 
-export function Card({ children, className = '', hover = true }: CardProps) {
+export function Card({ children, className = '', hover = true, ...props }: CardProps) {
   return (
     <div
-      className={`glass rounded-2xl space-card ${hover ? 'hover:shadow-lg transition-all duration-300 hover:border-emerald-500/30' : ''} border border-white/10 dark:border-slate-700/20 ${className}`}
+      {...props}
+      className={`glass rounded-2xl p-4 shadow-sm md:p-6 ${hover ? 'transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:border-emerald-500/30' : ''} border border-white/10 dark:border-slate-700/20 ${className}`}
     >
       {children}
     </div>

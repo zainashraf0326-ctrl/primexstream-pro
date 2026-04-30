@@ -2,32 +2,28 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Home, Zap, TrendingUp, PackageOpen, HelpCircle } from 'lucide-react';
+import { Home, Tv, TrendingUp, PackageOpen, Settings } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', label: 'Home', icon: Home },
-  { href: '/iptv', label: 'IPTV', icon: Zap },
+  { href: '/iptv', label: 'IPTV', icon: Tv },
   { href: '/earn', label: 'Earn', icon: TrendingUp },
   { href: '/orders', label: 'Orders', icon: PackageOpen },
-  { href: '/support', label: 'Support', icon: HelpCircle },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export function BottomNavigation() {
   const pathname = usePathname();
 
-  // Hide bottom nav on public pages and auth pages
+  // Hide bottom nav on public pages, auth pages, and admin pages
   if (pathname === '/' || pathname === '/login' || pathname.startsWith('/admin')) {
     return null;
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 md:hidden">
-      {/* Spacer for bottom nav */}
-      <div className="h-24" />
-
-      {/* Actual Navigation */}
-      <nav className="glass border-t border-white/20 dark:border-slate-700/30 backdrop-blur-xl">
-        <div className="flex justify-around items-center h-20 max-w-7xl mx-auto px-2 w-full">
+    <div className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200/80 bg-white/95 px-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)] pt-2 shadow-[0_-12px_28px_rgba(15,23,42,0.14)] backdrop-blur-lg dark:border-slate-700/70 dark:bg-slate-950/95">
+      <nav aria-label="Primary navigation" className="mx-auto w-full max-w-md">
+        <div className="grid h-[var(--bottom-nav-height)] grid-cols-5 gap-1">
           {navItems.map(({ href, label, icon: Icon }) => {
             const isActive =
               pathname === href ||
@@ -37,14 +33,14 @@ export function BottomNavigation() {
               <Link
                 key={href}
                 href={href}
-                className={`flex flex-col items-center justify-center gap-1 py-2 px-3 rounded-xl transition-all duration-200 ${
+                className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 transition-all duration-200 active:scale-[0.98] ${
                   isActive
-                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50/20 dark:bg-emerald-900/20'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300'
+                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                    : 'text-slate-600 hover:bg-slate-100/90 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
                 }`}
               >
-                <Icon className="w-5 h-5" />
-                <span className="text-xs font-semibold">{label}</span>
+                <Icon className="h-5 w-5" />
+                <span className="text-[11px] font-semibold leading-none">{label}</span>
               </Link>
             );
           })}

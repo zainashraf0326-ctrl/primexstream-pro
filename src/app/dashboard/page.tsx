@@ -12,27 +12,16 @@ export default function DashboardPage() {
   const { user, isLoggedIn, isLoading } = useApp();
   const router = useRouter();
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    }
-  }, [isLoggedIn, isLoading, router]);
-
-  if (!user) {
-    return null;
-  }
-
   return (
     <div className="min-h-screen bg-gradient-light dark:bg-gradient-dark pb-28">
       {/* Hero Welcome */}
       <section className="pt-8 md:pt-16 px-4 sm:px-6 lg:px-8 pb-12">
         <div className="max-w-5xl mx-auto animate-fade-in-up">
           <h1 className="text-4xl md:text-6xl font-bold text-slate-900 dark:text-white mb-2">
-            Welcome back, {user.name?.split(' ')[0]} 👋
+            {isLoggedIn && user ? `Welcome back, ${user.name?.split(' ')[0]} 👋` : 'Welcome to PrimexStream Pro 👋'}
           </h1>
           <p className="text-lg md:text-xl text-slate-600 dark:text-slate-400">
-            Manage your IPTV subscription and start earning today
+            {isLoggedIn ? 'Manage your IPTV subscription and start earning today' : 'Get premium IPTV access instantly'}
           </p>
         </div>
       </section>

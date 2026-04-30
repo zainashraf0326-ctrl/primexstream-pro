@@ -6,10 +6,20 @@ import { useApp } from '@/components/providers/app-provider';
 import { AppLayout } from '@/components/app-layout';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { PLANS } from '@/lib/init-firebase-data';
-import { createOrder, uploadPaymentProof } from '@/lib/firebase-service';
+import { PLANS } from '@/lib/init-supabase-data';
+import { createOrder } from '@/services/dbService';
+import { uploadProofImage } from '@/services/storageService';
 
 type PaymentMethod = 'remitly' | 'binance' | 'paypal' | 'cashapp';
+
+const PLAN_ID_MAP: Record<string, keyof typeof PLANS> = {
+  '1month': '1-month',
+  '6month': '6-month',
+  '12month': '12-month',
+  '1-month': '1-month',
+  '6-month': '6-month',
+  '12-month': '12-month',
+};
 
 function PaymentContent() {
   const [method, setMethod] = useState<PaymentMethod | null>(null);
@@ -23,19 +33,30 @@ function PaymentContent() {
   const searchParams = useSearchParams();
   const { isLoggedIn, isLoading, user } = useApp();
 
-  const planId = searchParams.get('plan') || '1-month';
-  const plan = PLANS[planId as keyof typeof PLANS];
+  const rawPlanId = searchParams.get('plan') || '1-month';
+  const normalizedPlanId = PLAN_ID_MAP[rawPlanId] || '1-month';
+  const plan = PLANS[normalizedPlanId];
+
+  const originalPriceFromQuery = Number(searchParams.get('originalPrice') || '');
+  const salePriceFromQuery = Number(searchParams.get('salePrice') || '');
+  const hasValidQueryPrices =
+    Number.isFinite(originalPriceFromQuery) &&
+    Number.isFinite(salePriceFromQuery) &&
+    originalPriceFromQuery > 0 &&
+    salePriceFromQuery > 0;
 
   // Calculate prices
-  const originalPrice = plan?.originalPrice || 0;
-  const salePrice = plan?.salePrice || 0;
+  const originalPrice = plan?.originalPrice || (hasValidQueryPrices ? originalPriceFromQuery : 20);
+  const salePrice = plan?.salePrice || (hasValidQueryPrices ? salePriceFromQuery : 20);
   const saleDiscount = originalPrice - salePrice;
 
   const isSpecialPayment = method === 'remitly' || method === 'binance';
-  const extraDiscount = isSpecialPayment ? plan?.extraDiscount || 0 : 0;
-  const finalPrice = salePrice - extraDiscount;
+  const extraDiscount = isSpecialPayment
+    ? Math.round((plan?.extraDiscount ?? salePrice * 0.3) * 100) / 100
+    : 0;
+  const finalPrice = Math.max(0, salePrice - extraDiscount);
   const totalSavings = saleDiscount + extraDiscount;
-  const totalSavingsPercent = Math.round((totalSavings / originalPrice) * 100);
+  const totalSavingsPercent = originalPrice > 0 ? Math.round((totalSavings / originalPrice) * 100) : 0;
 
   const paymentMethods = [
     { id: 'remitly', name: 'Remitly', icon: '🔵' },
@@ -59,8 +80,7 @@ function PaymentContent() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     setError('');
     setLoading(true);
 
@@ -85,12 +105,13 @@ function PaymentContent() {
         return;
       }
 
-      // Upload payment proof to Supabase
-      const { path: proofPath, url: proofUrl } = await uploadPaymentProof(user.id, screenshot);
+      const { path: proofPath, url: proofUrl } = await uploadProofImage(
+        user.id,
+        screenshot
+      );
 
-      // Create order in Firebase
-      const order = await createOrder(user.id, {
-        planId: planId,
+      await createOrder(user.id, {
+        planId: normalizedPlanId,
         plan: plan?.name || 'IPTV Plan',
         originalPrice: originalPrice,
         salePrice: salePrice,

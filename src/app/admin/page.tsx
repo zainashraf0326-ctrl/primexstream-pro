@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/admin-layout';
 import { useAdmin } from '@/components/providers/admin-provider';
-import { listenToDashboardStats, listenToOrders, updateOrderStatus, listenToPlans, updatePlan, updateSettings, listenToUsers } from '@/lib/admin-firestore-service';
+import { listenToDashboardStats, listenToOrders, updateOrderStatus, listenToPlans, updatePlan, updateSettings, listenToUsers } from '@/lib/admin-supabase-service';
 import {
   ShoppingCart,
   Clock,
@@ -299,7 +299,7 @@ export default function AdminDashboard() {
 
   const handleUpdateSocialMedia = async (socialMedia: any) => {
     try {
-      const { updateAdminSettings } = await import('@/lib/firebase-service');
+      const { updateAdminSettings } = await import('@/lib/supabase-service');
       await updateAdminSettings({
         socialMedia: {
           youtube: socialMedia.youtube,
@@ -778,11 +778,11 @@ export default function AdminDashboard() {
         {/* Plans Tab */}
         {activeTab === 'settings' && (
           <div className="space-y-3">
-            <h3 className="font-bold text-slate-900 dark:text-white mb-4 text-lg">Plans from Firestore</h3>
+            <h3 className="font-bold text-slate-900 dark:text-white mb-4 text-lg">Plans from Supabase</h3>
             {plans.length === 0 ? (
               <Card className="glass text-center py-8">
                 <CardContent>
-                  <p className="text-slate-600 dark:text-slate-400">No plans in Firestore. Create plans using the Firebase console.</p>
+                  <p className="text-slate-600 dark:text-slate-400">No plans in Supabase. Create plans using the Supabase console.</p>
                 </CardContent>
               </Card>
             ) : (
@@ -925,7 +925,7 @@ export default function AdminDashboard() {
                     className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
                   >
                     <Check className="w-4 h-4 mr-1" />
-                    Save to Firestore
+                    Save to Supabase
                   </Button>
                 </CardContent>
               </Card>

@@ -2,12 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useApp } from '@/components/providers/app-provider';
 import { AppLayout } from '@/components/app-layout';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Check } from 'lucide-react';
-import { getConfig, ConfigData } from '@/lib/firebase-service';
+import { getConfig, ConfigData } from '@/lib/supabase-service';
 
 type Device = 'smart-tv' | 'firestick' | 'android-box' | 'mobile' | 'laptop' | 'tablet' | 'mag-box' | 'pc';
 
@@ -15,6 +14,13 @@ interface WizardState {
   device: Device | null;
   plan: string | null;
 }
+
+type PlanOption = {
+  duration: string;
+  originalPrice: number;
+  salePrice: number;
+  extraDiscount: number;
+};
 
 const devices: { id: Device; label: string; emoji: string }[] = [
   { id: 'smart-tv', label: 'Smart TV', emoji: '📺' },
@@ -27,6 +33,27 @@ const devices: { id: Device; label: string; emoji: string }[] = [
   { id: 'pc', label: 'PC', emoji: '🖲️' },
 ];
 
+const FALLBACK_PLANS: Record<string, PlanOption> = {
+  '1month': {
+    duration: '1 Month',
+    originalPrice: 20,
+    salePrice: 20,
+    extraDiscount: 0,
+  },
+  '6month': {
+    duration: '6 Months',
+    originalPrice: 100,
+    salePrice: 65,
+    extraDiscount: 0,
+  },
+  '12month': {
+    duration: '12 Months',
+    originalPrice: 200,
+    salePrice: 95,
+    extraDiscount: 0,
+  },
+};
+
 export default function IPTVPage() {
   const [step, setStep] = useState(1);
   const [state, setState] = useState<WizardState>({
@@ -34,21 +61,23 @@ export default function IPTVPage() {
     plan: null,
   });
   const [config, setConfig] = useState<ConfigData | null>(null);
+  const [configLoading, setConfigLoading] = useState(true);
+  const [configError, setConfigError] = useState('');
   const router = useRouter();
-  const { isLoggedIn, isLoading } = useApp();
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    }
-  }, [isLoggedIn, isLoading, router]);
-
-  // Load config from Firebase
+  // Load config from Supabase
   useEffect(() => {
     const loadConfig = async () => {
-      const configData = await getConfig();
-      setConfig(configData);
+      try {
+        const configData = await getConfig();
+        setConfig(configData);
+        setConfigError('');
+      } catch (error) {
+        console.error('Failed to load config on IPTV page:', error);
+        setConfigError('Could not load live pricing. Showing default plans.');
+      } finally {
+        setConfigLoading(false);
+      }
     };
     loadConfig();
   }, []);
@@ -58,26 +87,32 @@ export default function IPTVPage() {
   };
 
   // Get current plan details from config
-  const plans = config ? {
+  const hasValidConfigPlans =
+    Boolean(config?.plans?.plan1Month) &&
+    Boolean(config?.plans?.plan6Month) &&
+    Boolean(config?.plans?.plan12Month);
+  const configPlans = hasValidConfigPlans ? config!.plans : null;
+
+  const plans: Record<string, PlanOption> = configPlans ? {
     '1month': { 
       duration: '1 Month', 
-      originalPrice: config.plans.plan1Month.price, 
-      salePrice: config.plans.plan1Month.salePrice,
+      originalPrice: configPlans.plan1Month.price, 
+      salePrice: configPlans.plan1Month.salePrice,
       extraDiscount: 0
     },
     '6month': { 
       duration: '6 Months', 
-      originalPrice: config.plans.plan6Month.price, 
-      salePrice: config.plans.plan6Month.salePrice,
+      originalPrice: configPlans.plan6Month.price, 
+      salePrice: configPlans.plan6Month.salePrice,
       extraDiscount: 0
     },
     '12month': { 
       duration: '12 Months', 
-      originalPrice: config.plans.plan12Month.price, 
-      salePrice: config.plans.plan12Month.salePrice,
+      originalPrice: configPlans.plan12Month.price, 
+      salePrice: configPlans.plan12Month.salePrice,
       extraDiscount: 0
     },
-  } : {};
+  } : FALLBACK_PLANS;
   
   const currentPlan = state.plan && plans[state.plan as keyof typeof plans] ? plans[state.plan as keyof typeof plans] : null;
   // When plan is selected, navigate to payment page.
@@ -96,7 +131,7 @@ export default function IPTVPage() {
   return (
     <AppLayout title="IPTV Services">
       <div className="w-full">
-        <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16">
+        <div className="mx-auto w-full max-w-5xl px-4 py-4 md:px-6 md:py-6">
         {/* Progress Indicator */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -181,7 +216,7 @@ export default function IPTVPage() {
               Choose your subscription plan
             </p>
             <div className="grid grid-cols-2 gap-3">
-              {config ? Object.entries(plans).map(([id, plan]) => (
+              {Object.entries(plans).map(([id, plan]) => (
                 <button
                   key={id}
                   onClick={() => {
@@ -218,12 +253,18 @@ export default function IPTVPage() {
                     </p>
                   </div>
                 </button>
-              )) : (
-                <div className="col-span-2 text-center py-8">
-                  <p className="text-slate-600 dark:text-slate-400">Loading plans...</p>
-                </div>
-              )}
+              ))}
             </div>
+            {configLoading && (
+              <p className="text-xs text-center text-slate-500 dark:text-slate-400 mt-3">
+                Loading live pricing...
+              </p>
+            )}
+            {!configLoading && configError && (
+              <p className="text-xs text-center text-amber-600 dark:text-amber-400 mt-3">
+                {configError}
+              </p>
+            )}
           </div>
         )}
 

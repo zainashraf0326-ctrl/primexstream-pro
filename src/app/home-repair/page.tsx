@@ -8,7 +8,8 @@ import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Wrench, Phone, MapPin, Calendar, Send, ArrowLeft, Star, CheckCircle } from 'lucide-react';
-import { createOrder, getConfig, ConfigData } from '@/lib/firebase-service';
+import { createOrder } from '@/services/dbService';
+import { getConfig, ConfigData } from '@/lib/supabase-service';
 
 interface Service {
   id: string;
@@ -59,7 +60,7 @@ export default function HomeRepairPage() {
   const [services, setServices] = useState<Service[]>([]);
   const [phoneNumber, setPhoneNumber] = useState('+1 (555) 123-4567');
 
-  // Load config from Firebase
+  // Load config from Supabase
   useEffect(() => {
     const loadConfig = async () => {
       try {
@@ -213,7 +214,7 @@ export default function HomeRepairPage() {
     setIsSubmitting(true);
     try {
       // Create order with custom service data
-      const orderId = await createOrder(user.id, {
+      const order = await createOrder(user.id, {
         userName: user.name || 'User',
         email: user.email || '',
         plan: selectedService.name,
@@ -222,7 +223,7 @@ export default function HomeRepairPage() {
         description: `Service: ${selectedService.name}\nDate: ${bookingData.date}\nLocation: ${bookingData.location}\nDetails: ${bookingData.description}`,
       });
 
-      if (orderId) {
+      if (order?.id) {
         setOrderSubmitted(true);
         // Reset form
         setBookingData({ date: '', location: '', description: '' });
@@ -407,7 +408,7 @@ export default function HomeRepairPage() {
                   </div>
                   <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-4 text-sm">
                     <p className="text-slate-600 dark:text-slate-400 mb-2">
-                      <strong>What's Next?</strong>
+                      <strong>What&apos;s Next?</strong>
                     </p>
                     <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
                       <li>✓ Check your email for request confirmation</li>
@@ -527,7 +528,7 @@ export default function HomeRepairPage() {
                         </Button>
 
                         <p className="text-xs text-slate-600 dark:text-slate-400 pt-2">
-                          Or we can call you! Just provide your number and we'll reach out
+                          Or we can call you! Just provide your number and we&apos;ll reach out
                         </p>
                       </div>
 

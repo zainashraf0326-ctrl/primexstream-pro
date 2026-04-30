@@ -1,6 +1,6 @@
 /**
  * Hook for managing notifications in real-time
- * Uses the new Firestore-based notification system
+ * Uses the new Supabase-based notification system
  */
 
 'use client';

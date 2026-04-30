@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/admin-layout';
-import { listenToPlans, createPlan, updatePlan, deletePlan, Plan } from '@/lib/admin-firestore-service';
+import { listenToPlans, createPlan, updatePlan, deletePlan, Plan } from '@/lib/admin-supabase-service';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Plus, Edit2, Trash2, X, Check } from 'lucide-react';

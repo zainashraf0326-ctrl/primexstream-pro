@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase-config';
+import { supabase } from '@/lib/supabase-config';
+import { claimReferralReward } from '@/lib/supabase-referral-service';
 import { useApp } from '@/components/providers/app-provider';
 import { AppLayout } from '@/components/app-layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -32,6 +32,13 @@ interface WalletData {
   confirmedBalance: number;
   usableBalance: number;
   lastUpdated: any;
+}
+
+function toDisplayDate(value: any) {
+  if (!value) return new Date(0);
+  if (typeof value?.toDate === 'function') return value.toDate();
+  if (value instanceof Date) return value;
+  return new Date(value);
 }
 
 interface WalletTransaction {
@@ -90,158 +97,124 @@ export default function WalletPage() {
   const [sendingReminder, setSendingReminder] = useState<string | null>(null);
   const [claimingReward, setClaimingReward] = useState<string | null>(null);
 
-  // Authentication check
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-    }
-  }, [isLoggedIn, isLoading, router]);
-
-  // Set up real-time wallet listener
+  // Set up real-time Supabase wallet/referral listeners
   useEffect(() => {
     if (!user?.id) {
       setLoading(false);
       return;
     }
 
-    try {
-      // Listen to wallet data in real-time
-      const walletRef = doc(db, 'wallets', user.id);
-      const unsubscribeWallet = onSnapshot(walletRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          setWalletData({
-            totalBalance: data.balance || 0,
-            pendingBalance: data.pendingBalance || 0,
-            confirmedBalance: data.confirmedBalance || (data.balance || 0),
-            usableBalance: data.usableBalance || (data.confirmedBalance || data.balance || 0),
-            lastUpdated: data.updatedAt,
-          });
-        } else {
-          // Initialize wallet if doesn't exist
-          setWalletData({
-            totalBalance: 0,
-            pendingBalance: 0,
-            confirmedBalance: 0,
-            usableBalance: 0,
-            lastUpdated: new Date(),
-          });
-        }
+    let active = true;
+
+    const loadWallet = async () => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('referral_code,total_referrals,credits,usable_balance,wallet_balance,updated_at')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (error || !active) return;
+
+      const balance = Number(data?.wallet_balance || data?.usable_balance || data?.credits || 0);
+      setWalletData({
+        totalBalance: balance,
+        pendingBalance: 0,
+        confirmedBalance: balance,
+        usableBalance: Number(data?.usable_balance || balance),
+        lastUpdated: data?.updated_at,
       });
+      setReferralCode(data?.referral_code || user.referralCode || 'N/A');
+    };
 
-      // Listen to transaction history
-      const transactionsRef = collection(db, 'wallets', user.id, 'transactions');
-      const unsubscribeTransactions = onSnapshot(transactionsRef, (snapshot) => {
-        const txs: WalletTransaction[] = [];
-        snapshot.forEach((doc) => {
-          txs.push({
-            id: doc.id,
-            ...doc.data(),
-          } as WalletTransaction);
-        });
-        setTransactions(txs.sort((a, b) => {
-          const timeA = a.createdAt?.toDate?.() || new Date(0);
-          const timeB = b.createdAt?.toDate?.() || new Date(0);
-          return timeB.getTime() - timeA.getTime();
-        }));
+    const loadTransactions = async () => {
+      const { data, error } = await supabase
+        .from('wallet_history')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error || !active) return;
+
+      setTransactions(
+        (data || []).map((row: any) => ({
+          id: row.id,
+          type: row.type || 'confirmed_reward',
+          amount: Number(row.amount || 0),
+          description: row.description || row.reason || 'Wallet activity',
+          status: 'confirmed',
+          createdAt: row.created_at,
+          referralId: row.referral_id,
+        }))
+      );
+    };
+
+    const loadReferrals = async () => {
+      const { data, error } = await supabase
+        .from('referrals')
+        .select('*')
+        .eq('referrer_uid', user.id)
+        .order('joined_at', { ascending: false });
+
+      if (error || !active) return;
+
+      const refs: Referral[] = (data || []).map((row: any) => ({
+        id: row.id,
+        referredUserId: row.referred_uid,
+        status: row.purchased_plan || row.status === 'purchased' || row.status === 'claimed' ? 'purchased' : 'signed_up',
+        rewardGiven: Boolean(row.reward_claimed),
+        rewardAmount: Number(row.reward_amount || 5),
+        createdAt: row.joined_at,
+        referralName: row.referred_name || 'User',
+        referralEmail: row.referred_email || 'Email not available',
+        lastReminderSent: row.last_reminder_sent,
+      }));
+
+      const purchased = refs.filter((ref) => ref.status === 'purchased').length;
+      const totalEarned = refs
+        .filter((ref) => ref.rewardGiven)
+        .reduce((sum, ref) => sum + Number(ref.rewardAmount || 0), 0);
+
+      setReferrals(refs);
+      setReferralStats({
+        totalReferrals: refs.length,
+        successfulPurchases: purchased,
+        pendingReferrals: refs.length - purchased,
+        totalEarned,
       });
+    };
 
-      // Fetch user data for referral stats
-      const userRef = doc(db, 'users', user.id);
-      const unsubscribeUser = onSnapshot(userRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const userData = snapshot.data();
-          setReferralCode(userData.referralCode || 'N/A');
-          setReferralStats({
-            totalReferrals: userData.totalReferrals || 0,
-            successfulPurchases: userData.completedPurchases || 0,
-            pendingReferrals: (userData.totalReferrals || 0) - (userData.completedPurchases || 0),
-            totalEarned: userData.totalEarnings || 0,
-          });
-        }
-      });
-
-      // Listen to referrals (fast - no user fetching!)
-      const referralsRef = collection(db, 'referrals');
-      const q = query(referralsRef, where('referrerId', '==', user.id));
-      const unsubscribeReferrals = onSnapshot(q, (snapshot) => {
-        const refs: Referral[] = [];
-        snapshot.docs.forEach((docRef) => {
-          const refData = docRef.data();
-          refs.push({
-            id: docRef.id,
-            referredUserId: refData.referredUserId,
-            status: refData.status || 'signed_up',
-            rewardGiven: refData.rewardGiven || false,
-            rewardAmount: refData.rewardAmount || 5,
-            createdAt: refData.createdAt,
-            referralName: undefined, // Will be fetched separately
-            referralEmail: undefined, // Will be fetched separately
-            lastReminderSent: refData.lastReminderSent,
-          });
-        });
-        setReferrals(refs.sort((a, b) => {
-          const timeA = a.createdAt?.toDate?.() || new Date(0);
-          const timeB = b.createdAt?.toDate?.() || new Date(0);
-          return timeB.getTime() - timeA.getTime();
-        }));
-      });
-
-      setLoading(false);
-
-      return () => {
-        unsubscribeWallet();
-        unsubscribeTransactions();
-        unsubscribeUser();
-        unsubscribeReferrals();
-      };
-    } catch (error) {
-      console.error('Error setting up wallet listeners:', error);
-      setLoading(false);
-    }
-  }, [user?.id]);
-
-  // Batch fetch referral user details (separate effect for performance)
-  useEffect(() => {
-    if (referrals.length === 0) return;
-
-    const fetchUserDetails = async () => {
+    const loadAll = async () => {
       try {
-        const userIds = referrals
-          .map(r => r.referredUserId)
-          .filter(id => !referrals.find(ref => ref.referredUserId === id && ref.referralName));
-
-        if (userIds.length === 0) return;
-
-        // Batch fetch users
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('__name__', 'in', userIds.slice(0, 10)));
-        const querySnap = await getDocs(q);
-
-        // Update referrals with user details
-        const userMap = new Map();
-        querySnap.forEach(doc => {
-          userMap.set(doc.id, {
-            name: doc.data().name,
-            email: doc.data().email,
-          });
-        });
-
-        setReferrals(prev => 
-          prev.map(ref => 
-            userMap.has(ref.referredUserId)
-              ? { ...ref, ...userMap.get(ref.referredUserId) }
-              : ref
-          )
-        );
+        await Promise.all([loadWallet(), loadTransactions(), loadReferrals()]);
       } catch (error) {
-        console.error('Error fetching referral user details:', error);
+        console.error('Error loading wallet data:', error);
+      } finally {
+        if (active) setLoading(false);
       }
     };
 
-    fetchUserDetails();
-  }, [referrals.length]); // Only run when referrals count changes, not on every referral change
+    void loadAll();
+
+    const usersChannel = supabase
+      .channel(`wallet-user-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users', filter: `id=eq.${user.id}` }, loadWallet)
+      .subscribe();
+    const historyChannel = supabase
+      .channel(`wallet-history-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_history', filter: `user_id=eq.${user.id}` }, loadTransactions)
+      .subscribe();
+    const referralsChannel = supabase
+      .channel(`wallet-referrals-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'referrals', filter: `referrer_uid=eq.${user.id}` }, loadReferrals)
+      .subscribe();
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(usersChannel);
+      void supabase.removeChannel(historyChannel);
+      void supabase.removeChannel(referralsChannel);
+    };
+  }, [user?.id, user?.referralCode]);
 
   // Generate referral link
   useEffect(() => {
@@ -292,23 +265,8 @@ export default function WalletPage() {
   const handleClaimReward = async (referralId: string, rewardAmount: number = 5) => {
     setClaimingReward(referralId);
     try {
-      const { updateDoc, increment } = await import('firebase/firestore');
-      
-      // Update referral to mark reward as given
-      const referralRef = doc(db, 'referrals', referralId);
-      await updateDoc(referralRef, {
-        rewardGiven: true,
-      });
-
-      // Add amount to user's wallet
-      const walletRef = doc(db, 'wallets', user?.id || '');
-      await updateDoc(walletRef, {
-        balance: increment(rewardAmount),
-        totalEarnings: increment(rewardAmount),
-        updatedAt: new Date(),
-      });
-
-      console.log(`✅ Claimed $${rewardAmount} reward!`);
+      if (!user?.id) return;
+      await claimReferralReward(user.id, referralId, rewardAmount);
     } catch (error) {
       console.error('Error claiming reward:', error);
     } finally {
@@ -613,7 +571,7 @@ export default function WalletPage() {
                                 {tx.description}
                               </p>
                               <p className="text-xs text-slate-600 dark:text-slate-400">
-                                {tx.createdAt?.toDate?.()?.toLocaleDateString?.() || 'Recent'}
+                                {tx.createdAt ? toDisplayDate(tx.createdAt).toLocaleDateString() : 'Recent'}
                               </p>
                             </div>
                           </div>
@@ -682,7 +640,7 @@ export default function WalletPage() {
                                 {tx.description}
                               </p>
                               <p className="text-xs text-slate-600 dark:text-slate-400">
-                                {tx.createdAt?.toDate?.()?.toLocaleDateString?.() || 'Recent'}
+                                {tx.createdAt ? toDisplayDate(tx.createdAt).toLocaleDateString() : 'Recent'}
                               </p>
                             </div>
                           </div>

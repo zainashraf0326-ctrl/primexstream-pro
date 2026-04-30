@@ -21,11 +21,11 @@ export function Button({
   ...props
 }: ButtonProps) {
   const baseStyles =
-    'font-semibold rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95';
+    'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-50 active:scale-95';
 
   const variantStyles = {
     primary:
-      'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white hover:shadow-lg hover:from-emerald-600 hover:to-emerald-700 focus:ring-emerald-400 dark:focus:ring-emerald-500',
+      'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-sm hover:from-emerald-600 hover:to-emerald-700 hover:shadow-md focus:ring-emerald-400 dark:focus:ring-emerald-500',
     secondary:
       'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:bg-slate-200 dark:hover:bg-slate-700 focus:ring-slate-400 dark:focus:ring-slate-500',
     outline:
@@ -39,7 +39,7 @@ export function Button({
   const sizeStyles = {
     xs: 'px-3 py-1.5 text-xs',
     sm: 'px-4 py-2 text-sm',
-    md: 'px-6 py-3 text-base',
+    md: 'px-5 py-2.5 text-base',
     lg: 'px-8 py-4 text-lg',
     xl: 'px-10 py-5 text-lg',
   };
