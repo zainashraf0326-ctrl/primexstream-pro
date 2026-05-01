@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useApp } from '@/components/providers/app-provider';
-import { supabase } from '@/lib/supabase-config';
+import { database, isFirebaseConfigured } from '@/services/firebaseClient';
+import { get, ref } from 'firebase/database';
 import { AppLayout } from '@/components/app-layout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ import {
   Upload,
   CheckCircle2,
   AlertCircle,
+  Bell,
   FileUp,
   X as XIcon,
   ChevronDown,
@@ -34,8 +36,7 @@ import {
   Users2,
 } from 'lucide-react';
 import { useRealtimeReferrals } from '@/lib/useRealtimeReferrals';
-import { claimReferralReward } from '@/lib/supabase-referral-service';
-import { applyReferralCode } from '@/lib/supabase-referral-service';
+import { claimReferralReward, applyReferralCode } from '@/lib/firebase-referral-service';
 import { getSocialMediaLinks } from '@/lib/supabase-service';
 import { ReferralTreeModal } from '@/components/referral-tree-modal';
 import { EarnBreakdownModal } from '@/components/earn-breakdown-modal';
@@ -59,7 +60,7 @@ export default function EarnPage() {
   // Local state
   const [copied, setCopied] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
-  const [referralCode] = useState(user?.referralCode || '');
+  const [referralCode, setReferralCode] = useState(user?.referralCode || '');
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [applyingCode, setApplyingCode] = useState(false);
   const [codeMessage, setCodeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -79,11 +80,30 @@ export default function EarnPage() {
   const [submittingSocialTask, setSubmittingSocialTask] = useState(false);
   const [socialTaskMessage, setSocialTaskMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [socialTaskSubmitted, setSocialTaskSubmitted] = useState(false);
-  const [socialTasksExpanded, setSocialTasksExpanded] = useState(false);
+  const [activeTask, setActiveTask] = useState<'install-app' | 'social-media' | null>(null);
   const [activeReferralFilter, setActiveReferralFilter] = useState<'total' | 'joined' | 'purchased' | 'earned'>('total');
   const [showReferralTree, setShowReferralTree] = useState(false);
   const [showEarnBreakdown, setShowEarnBreakdown] = useState(false);
   const [remindingUser, setRemindingUser] = useState<string | null>(null);
+
+  const getErrorMessage = (error: unknown, fallbackMessage: string) => {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+
+    if (typeof error === 'string' && error.trim()) {
+      return error;
+    }
+
+    if (error && typeof error === 'object' && 'message' in error) {
+      const nextMessage = (error as { message?: unknown }).message;
+      if (typeof nextMessage === 'string' && nextMessage.trim()) {
+        return nextMessage;
+      }
+    }
+
+    return fallbackMessage;
+  };
 
   const filteredReferrals = referrals.filter((referral) => {
     if (activeReferralFilter === 'joined') return !referral.purchasedPlan;
@@ -92,12 +112,65 @@ export default function EarnPage() {
     return true;
   });
 
+  useEffect(() => {
+    let active = true;
+
+    const loadReferralCode = async () => {
+      const fallbackCode = user?.referralCode || '';
+
+      if (fallbackCode) {
+        if (active) {
+          setReferralCode(fallbackCode);
+        }
+        return;
+      }
+
+      if (!user?.id) {
+        if (active) {
+          setReferralCode(fallbackCode);
+        }
+        return;
+      }
+      
+      // Load referral code from Firebase
+      if (!isFirebaseConfigured || !database) {
+        setReferralCode(fallbackCode);
+        return;
+      }
+
+      try {
+        const snapshot = await get(ref(database, `users/${user.id}/referralCode`));
+        if (!active) return;
+        
+        const code = snapshot.val() || fallbackCode;
+        setReferralCode(code);
+      } catch (error) {
+        if (active) {
+          setReferralCode(fallbackCode);
+          console.warn(
+            'Referral code lookup fallback used:',
+            getErrorMessage(error, 'Could not fetch referral code from Firebase.')
+          );
+        }
+      }
+    };
+
+    void loadReferralCode();
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id, user?.referralCode]);
+
   // Generate referral link
   useEffect(() => {
     if (referralCode) {
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-      setReferralLink(`${baseUrl}/login?refCode=${referralCode}`);
+      setReferralLink(`${baseUrl}/login?ref=${referralCode}`);
+      return;
     }
+
+    setReferralLink('');
   }, [referralCode]);
 
   // Fetch social media links
@@ -114,10 +187,16 @@ export default function EarnPage() {
   }, []);
 
   // Copy referral code to clipboard
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(id);
-    setTimeout(() => setCopied(null), 2000);
+  const handleCopy = async (text: string, id: string) => {
+    if (!text) return;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch (error) {
+      console.error('Error copying text:', error);
+    }
   };
 
   // Claim referral reward
@@ -136,26 +215,29 @@ export default function EarnPage() {
     } catch (error) {
       console.error('Error claiming reward:', error);
     } finally {
-      setClaiming(referralId);
+      setClaiming(null);
     }
   };
 
   // Send reminder to referral user
-  const handleSendReminder = async (referralId: string, referralName: string, referralEmail?: string) => {
+  const handleSendReminder = async (referredUserId: string, referralName: string) => {
     if (!user?.id) return;
 
-    setRemindingUser(referralId);
+    setRemindingUser(referredUserId);
     try {
-      // Send notification to referral user
       const message = `Your referrer ${user.name || 'A user'} is reminding you: Use $5 to buy a subscription and they'll make a reward!`;
-      
-      // Store notification in Supabase
       const { error } = await supabase.from('notifications').insert({
-        user_id: referralId,
-        referrer_id: user.id,
-        type: 'referral_reminder',
-        message: message,
+        user_id: referredUserId,
+        title: 'Referral Reminder',
+        type: 'reminder',
+        message,
         read: false,
+        deleted: false,
+        data: {
+          link: '/iptv',
+          referrerId: user.id,
+          referrerName: user.name || 'A user',
+        },
         created_at: new Date().toISOString(),
       });
 
@@ -334,23 +416,29 @@ export default function EarnPage() {
               </Card>
             </div>
 
+            <div className="mx-auto grid w-full max-w-5xl gap-4 md:grid-cols-2 items-start">
             {/* Your Unique Referral Code Section */}
             {referralCode && (
-              <Card className="p-8 glass glass-light dark:glass animate-fade-in-up bg-gradient-to-br from-emerald-50 to-blue-50 dark:from-emerald-900/30 dark:to-blue-900/30 border-2 border-emerald-200 dark:border-emerald-700">
-                <div className="space-y-6">
-                  <div>
-                    <h3 className="text-xs uppercase tracking-widest text-emerald-700 dark:text-emerald-300 font-bold mb-2">Your Unique Referral Code</h3>
-                    <div className="bg-white dark:bg-slate-900/50 rounded-lg p-4 border-2 border-emerald-300 dark:border-emerald-600 backdrop-blur">
-                      <p className="text-4xl font-bold text-emerald-600 dark:text-emerald-400 font-mono tracking-widest text-center py-2">
+              <Card className="order-1 h-full p-4 md:p-5 glass glass-light dark:glass animate-fade-in-up bg-gradient-to-br from-emerald-50 to-blue-50 dark:from-emerald-900/30 dark:to-blue-900/30 border-2 border-emerald-200 dark:border-emerald-700 overflow-hidden">
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 flex-shrink-0">
+                      <Users2 className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                    <h3 className="text-sm uppercase tracking-[0.2em] text-emerald-700 dark:text-emerald-300 font-bold mb-2">Your Unique Referral Code</h3>
+                    <div className="bg-white dark:bg-slate-900/50 rounded-2xl p-4 md:p-5 border-2 border-emerald-300 dark:border-emerald-600 backdrop-blur overflow-hidden shadow-sm">
+                      <p className="break-all text-xl md:text-3xl font-bold text-emerald-600 dark:text-emerald-400 font-mono tracking-[0.16em] md:tracking-[0.24em] text-center">
                         {referralCode}
                       </p>
                     </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-3 text-center">
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-3">
                       📌 This is YOUR unique code. Each user has a different code!
                     </p>
                   </div>
+                  </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Button
                       onClick={() => handleCopy(referralCode, 'code')}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 w-full"
@@ -381,7 +469,7 @@ export default function EarnPage() {
 
             {/* Referral Link Section */}
             {referralLink && (
-              <Card className="p-6 glass glass-light dark:glass animate-fade-in-up bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border border-blue-200 dark:border-blue-800">
+              <Card className="order-3 md:col-span-2 p-6 glass glass-light dark:glass animate-fade-in-up bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border border-blue-200 dark:border-blue-800 overflow-hidden">
                 <div className="space-y-4">
                   <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
@@ -398,18 +486,17 @@ export default function EarnPage() {
                   </div>
 
                   <div className="bg-white dark:bg-slate-900 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={referralLink}
-                        readOnly
-                        className="flex-1 bg-transparent text-sm text-slate-600 dark:text-slate-400 font-mono outline-none"
-                      />
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                      <div className="min-w-0 flex-1 rounded-md bg-slate-50 dark:bg-slate-800/70 px-3 py-2">
+                        <p className="break-all text-sm text-slate-600 dark:text-slate-400 font-mono">
+                          {referralLink}
+                        </p>
+                      </div>
                       <Button
                         onClick={() => handleCopy(referralLink, 'link')}
                         variant="outline"
                         size="sm"
-                        className="gap-2 flex-shrink-0"
+                        className="gap-2 flex-shrink-0 self-start"
                       >
                         <Copy className="w-4 h-4" />
                         {copied === 'link' ? 'Copied!' : 'Copy'}
@@ -417,7 +504,7 @@ export default function EarnPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <Button
                       onClick={() => {
                         if (navigator.share) {
@@ -454,15 +541,17 @@ export default function EarnPage() {
             )}
 
             {/* Apply Referral Code Section */}
-            <Card className="p-6 glass glass-light dark:glass animate-fade-in-up">
-              <div className="flex items-center gap-3 mb-6">
-                <Gift className="w-6 h-6 text-orange-600" />
-                <div>
-                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">
+            <Card className="order-2 h-full p-4 md:p-5 glass glass-light dark:glass animate-fade-in-up border border-orange-200/80 dark:border-orange-800/70 bg-white/85 dark:bg-slate-900/70">
+              <div className="flex items-start gap-3 mb-5">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 flex-shrink-0">
+                  <Gift className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-lg md:text-xl font-bold text-slate-900 dark:text-white">
                     Apply Referral Code
                   </h3>
                   <p className="text-sm text-slate-600 dark:text-slate-400">
-                    Have a referral code from a friend? Enter it below!
+                    Missed the referral link? Enter your friend&apos;s code below.
                   </p>
                 </div>
               </div>
@@ -472,19 +561,19 @@ export default function EarnPage() {
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Referral Code
                   </label>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-3 md:flex-row">
                     <Input
                       type="text"
                       placeholder="Enter referral code"
                       value={referralCodeInput}
                       onChange={(e) => setReferralCodeInput(e.target.value.toUpperCase())}
                       disabled={applyingCode}
-                      className="flex-1"
+                      className="flex-1 rounded-2xl px-5 py-3 text-sm md:text-base uppercase tracking-[0.16em]"
                     />
                     <Button
                       onClick={handleApplyReferralCode}
                       disabled={applyingCode || !referralCodeInput.trim()}
-                      className="bg-orange-600 hover:bg-orange-700 text-white gap-2"
+                      className="bg-orange-600 hover:bg-orange-700 text-white gap-2 md:min-w-[170px]"
                     >
                       {applyingCode ? (
                         <>
@@ -515,6 +604,7 @@ export default function EarnPage() {
                 )}
               </div>
             </Card>
+            </div>
 
             {/* Tasks Section */}
             <div className="space-y-4">
@@ -527,6 +617,8 @@ export default function EarnPage() {
                 icon={<Smartphone className="w-6 h-6" />}
                 status="available"
                 reward="5 Free Days + ₹50 Wallet Credit"
+                isExpanded={activeTask === 'install-app'}
+                onToggle={() => setActiveTask((current) => current === 'install-app' ? null : 'install-app')}
               >
                 <AdminAppTaskCard
                   userId={user?.id}
@@ -542,6 +634,8 @@ export default function EarnPage() {
                 icon={<Users2 className="w-6 h-6" />}
                 status="available"
                 reward="1 Month Free + ₹20 Wallet Credit"
+                isExpanded={activeTask === 'social-media'}
+                onToggle={() => setActiveTask((current) => current === 'social-media' ? null : 'social-media')}
               >
                 <div className="space-y-6">
                   <div className="bg-white/50 dark:bg-slate-800/50 rounded-lg p-4 text-sm">
@@ -1145,7 +1239,7 @@ export default function EarnPage() {
                       Submission Successful!
                     </h3>
                     <p className="text-sm text-slate-600 dark:text-slate-400">
-                      Your social task submission has been sent to admin for review. You'll receive your reward once approved within 24-48 hours.
+                      Your social task submission has been sent to admin for review. You&apos;ll receive your reward once approved within 24-48 hours.
                     </p>
                   </div>
                   <Button
@@ -1241,15 +1335,14 @@ export default function EarnPage() {
                               <Button
                                 onClick={() =>
                                   handleSendReminder(
-                                    referral.id,
-                                    referral.referredName || 'User',
-                                    referral.referredEmail
+                                    referral.referredUid,
+                                    referral.referredName || 'User'
                                   )
                                 }
-                                disabled={remindingUser === referral.id}
+                                disabled={remindingUser === referral.referredUid}
                                 className="bg-blue-600 hover:bg-blue-700 text-white text-sm gap-2"
                               >
-                                {remindingUser === referral.id ? (
+                                {remindingUser === referral.referredUid ? (
                                   <>
                                     <div className="w-3 h-3 rounded-full border-2 border-white border-t-blue-700 animate-spin"></div>
                                     Sending...

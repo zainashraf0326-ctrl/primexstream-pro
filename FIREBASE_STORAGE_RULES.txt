@@ -1,0 +1,32 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        (request.auth.token.email == 'zainashraf0326@gmail.com' ||
+         request.auth.token.email == 'admin@primexstream.com');
+    }
+
+    match /payment-proofs/{allPaths=**} {
+      allow read: if true;
+      allow write: if true;
+      allow delete: if isAdmin();
+    }
+
+    match /task-proofs/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /images/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+  }
+}

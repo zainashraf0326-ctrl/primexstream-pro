@@ -4,12 +4,28 @@ import { useState } from 'react';
 import { X, Loader } from 'lucide-react';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { PasswordStrengthChecklist } from '@/components/auth/password-strength-checklist';
+import { getPasswordStrength } from '@/lib/password-strength';
 import {
   getAuthErrorMessage,
   signUpWithEmailPassword,
 } from '@/services/authService';
 import { ensureUserProfile, transferUserData } from '@/services/dbService';
-import { createUser } from '@/lib/supabase-user-service';
+
+function savePendingSignupProfile(email: string, name: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(
+    'primex_pending_signup_profile',
+    JSON.stringify({
+      email: email.trim().toLowerCase(),
+      name: name.trim(),
+      appliedReferralCode: '',
+    })
+  );
+}
 
 interface PostPaymentSignupModalProps {
   isOpen: boolean;
@@ -29,6 +45,7 @@ export default function PostPaymentSignupModal({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const passwordStrength = getPasswordStrength(password);
 
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,8 +56,10 @@ export default function PostPaymentSignupModal({
       return;
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (!passwordStrength.isValid) {
+      setError(
+        'Password must include 8+ characters, uppercase, lowercase, number, and symbol.'
+      );
       return;
     }
 
@@ -52,24 +71,21 @@ export default function PostPaymentSignupModal({
     setLoading(true);
 
     try {
+      savePendingSignupProfile(email, name);
+
       const authUser = await signUpWithEmailPassword({ name, email, password });
+      const authUid = authUser.uid;
       const guestUid =
         typeof window !== 'undefined'
           ? window.localStorage.getItem('primex_guest_checkout_uid')
           : null;
 
       if (guestUid) {
-        await transferUserData(guestUid, authUser.uid, { name, email });
+        await transferUserData(guestUid, authUid, { name, email });
         window.localStorage.removeItem('primex_guest_checkout_uid');
       } else {
-        await ensureUserProfile(authUser.uid, { name, email });
+        await ensureUserProfile(authUid, { name, email });
       }
-
-      await createUser(authUser.uid, {
-        name,
-        email,
-        totalReferrals: 0,
-      });
 
       setLoading(false);
       onClose();
@@ -152,20 +168,20 @@ export default function PostPaymentSignupModal({
 
               <input
                 type="password"
-                placeholder="Password"
+                placeholder="Create a password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 dark:border-slate-600 p-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-                minLength={6}
               />
+
+              <PasswordStrengthChecklist password={password} />
 
               <input
                 type="password"
-                placeholder="Confirm Password"
+                placeholder="Confirm your password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 dark:border-slate-600 p-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-                minLength={6}
               />
 
               {error && (

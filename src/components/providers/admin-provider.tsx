@@ -1,9 +1,26 @@
 'use client';
 
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { supabase } from '@/lib/supabase-config';
+import { ensureUserProfile } from '@/services/dbService';
+import {
+  getAuthErrorMessage,
+  signInWithEmailPassword,
+  signOutUser,
+  subscribeToAuthChanges,
+} from '@/services/authService';
 
-const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'zainashraf0326@gmail.com';
+const ADMIN_EMAILS = Array.from(
+  new Set(
+    [
+      ...(process.env.NEXT_PUBLIC_ADMIN_EMAIL || '')
+        .split(',')
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean),
+      'zainashraf0326@gmail.com',
+      'admin@primexstream.com',
+    ]
+  )
+);
 
 interface AdminContextType {
   user: any | null;
@@ -16,25 +33,48 @@ interface AdminContextType {
 
 const AdminContext = createContext<AdminContextType | undefined>(undefined);
 
+function isAdminEmail(email?: string | null) {
+  return Boolean(email && ADMIN_EMAILS.includes(email.toLowerCase()));
+}
+
+function getAdminDisplayName(user: any) {
+  return (
+    user?.displayName ||
+    user?.providerData?.[0]?.displayName ||
+    user?.email?.split('@')[0] ||
+    'Admin'
+  );
+}
+
 export function AdminProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      const u = data.session?.user;
-      setUser(u && u.email === ADMIN_EMAIL ? u : null);
+    const syncAdminProfile = async (u: any | null) => {
+      if (!u || !isAdminEmail(u.email)) {
+        return null;
+      }
+
+      try {
+        await ensureUserProfile(u.uid, {
+          name: getAdminDisplayName(u),
+          email: u.email || '',
+        });
+      } catch (error) {
+        console.warn('Failed to ensure admin profile:', error);
+      }
+
+      return u;
+    };
+
+    const unsubscribe = subscribeToAuthChanges(async (u) => {
+      setUser(await syncAdminProfile(u));
       setIsLoading(false);
     });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      const u = session?.user;
-      setUser(u && u.email === ADMIN_EMAIL ? u : null);
-      setIsLoading(false);
-    });
-
-    return () => data.subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -42,14 +82,13 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       setError(null);
       
       // Check if email is admin email
-      if (email !== ADMIN_EMAIL) {
+      if (!isAdminEmail(email)) {
         throw new Error('Unauthorized. Only the admin can access this panel.');
       }
 
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      await signInWithEmailPassword({ email, password });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Login failed';
+      const message = getAuthErrorMessage(err, 'Login failed');
       setError(message);
       throw err;
     }
@@ -58,7 +97,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     try {
       setError(null);
-      await supabase.auth.signOut();
+      await signOutUser();
       setUser(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Logout failed';

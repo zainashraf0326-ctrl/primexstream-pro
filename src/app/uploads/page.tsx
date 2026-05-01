@@ -20,7 +20,7 @@ export default function UploadsPage() {
     console.error('Upload error:', error);
   };
 
-  const handleDeleteUpload = async (uploadId: string, fileName: string) => {
+  const handleDeleteUpload = async (uploadId: string, fileName?: string) => {
     try {
       const success = await deleteUploadImage(uploadId, fileName);
       if (success) {
@@ -84,14 +84,9 @@ export default function UploadsPage() {
             </p>
 
             <AdminUploadsList
-              onDelete={async (uploadId: string) => {
-                // Get the upload details to delete from storage
-                const uploadsData = await import('@/lib/uploadImage').then((m) =>
-                  m.getAllUploads()
-                );
-                const upload = uploadsData.find((u: any) => u.id === uploadId) as any;
+              onDelete={async (upload: any) => {
                 if (upload) {
-                  await handleDeleteUpload(uploadId, upload.fileName);
+                  await handleDeleteUpload(upload.id, upload.fileName);
                 }
               }}
             />

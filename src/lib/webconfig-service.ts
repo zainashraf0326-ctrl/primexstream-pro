@@ -52,6 +52,16 @@ const defaultWebConfig: WebConfigData = {
   updatedAt: new Date().toISOString(),
 };
 
+function isMissingAppConfigTable(error: any) {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.code === 'PGRST205' ||
+    message.includes('app_config') ||
+    message.includes('relation') ||
+    message.includes('does not exist')
+  );
+}
+
 export const getWebConfig = async (): Promise<WebConfigData | null> => {
   try {
     const { data, error } = await supabase
@@ -60,7 +70,13 @@ export const getWebConfig = async (): Promise<WebConfigData | null> => {
       .eq('id', CONFIG_DOC)
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      if (isMissingAppConfigTable(error)) {
+        return defaultWebConfig;
+      }
+
+      throw error;
+    }
 
     if (!data?.value) {
       return defaultWebConfig;
@@ -74,7 +90,7 @@ export const getWebConfig = async (): Promise<WebConfigData | null> => {
     };
   } catch (error) {
     console.error('Error getting web config:', error);
-    return null;
+    return defaultWebConfig;
   }
 };
 
@@ -93,7 +109,13 @@ export const updateWebConfig = async (config: WebConfigData): Promise<boolean> =
         updated_at: now,
       });
 
-    if (error) throw error;
+    if (error) {
+      if (isMissingAppConfigTable(error)) {
+        return false;
+      }
+
+      throw error;
+    }
     return true;
   } catch (error) {
     console.error('Error updating web config:', error);

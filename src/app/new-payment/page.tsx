@@ -21,6 +21,32 @@ const PLAN_ID_MAP: Record<string, keyof typeof PLANS> = {
   '12-month': '12-month',
 };
 
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string' && maybeMessage.trim()) {
+      return maybeMessage;
+    }
+
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== '{}') {
+        return serialized;
+      }
+    } catch {}
+  }
+
+  return fallbackMessage;
+}
+
 function PaymentContent() {
   const [method, setMethod] = useState<PaymentMethod | null>(null);
   const [screenshot, setScreenshot] = useState<File | null>(null);
@@ -113,6 +139,7 @@ function PaymentContent() {
       await createOrder(user.id, {
         planId: normalizedPlanId,
         plan: plan?.name || 'IPTV Plan',
+        planName: plan?.name || 'IPTV Plan',
         originalPrice: originalPrice,
         salePrice: salePrice,
         finalPrice: finalPrice,
@@ -123,14 +150,18 @@ function PaymentContent() {
         status: 'pending',
         date: new Date().toLocaleDateString(),
         user: user.name,
+        userName: user.name,
+        userEmail: user.email,
+        email: user.email,
       });
 
       setSuccess(true);
       setTimeout(() => {
         router.push('/orders');
       }, 2000);
-    } catch (err: any) {
-      setError(err.message || 'Error processing payment');
+    } catch (err) {
+      console.error('New payment submission failed:', err);
+      setError(getErrorMessage(err, 'Error processing payment'));
     } finally {
       setLoading(false);
     }
@@ -144,7 +175,7 @@ function PaymentContent() {
         {success && (
           <Card className="glass border-emerald-200 dark:border-emerald-700/30 bg-emerald-50/20 dark:bg-emerald-900/10">
             <CardContent className="pt-6 text-center">
-              <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">✅ Payment Submitted Successfully!</p>
+              <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">Payment Submitted Successfully!</p>
               <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">Your order is pending verification. Redirecting...</p>
             </CardContent>
           </Card>
@@ -216,7 +247,7 @@ function PaymentContent() {
 
         {/* Payment Proof */}
         <Card className="glass">
-          <CardTitle className="mb-4">📸 Payment Proof</CardTitle>
+          <CardTitle className="mb-4">Payment Proof</CardTitle>
           <CardContent className="space-y-4">
             <div>
               <label htmlFor="payment-file" className="block text-sm font-semibold text-slate-900 dark:text-white mb-3">Upload Screenshot</label>

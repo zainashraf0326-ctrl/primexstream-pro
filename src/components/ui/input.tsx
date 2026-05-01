@@ -1,7 +1,7 @@
 'use client';
 
-import { InputHTMLAttributes, ReactNode } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { InputHTMLAttributes, ReactNode, useEffect, useState } from 'react';
+import { AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -20,6 +20,14 @@ export function Input({
   className = '',
   ...props
 }: InputProps) {
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const isPasswordField = type === 'password';
+  const resolvedType = isPasswordField && isPasswordVisible ? 'text' : type;
+
+  useEffect(() => {
+    setIsPasswordVisible(false);
+  }, [type]);
+
   return (
     <div className="w-full">
       {label && (
@@ -27,17 +35,24 @@ export function Input({
           {label}
         </label>
       )}
-      <div className="relative">
+      <div
+        className="relative"
+        onMouseLeave={() => {
+          if (isPasswordField) {
+            setIsPasswordVisible(false);
+          }
+        }}
+      >
         {icon && (
           <div className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400 dark:text-slate-500">
             {icon}
           </div>
         )}
         <input
-          type={type}
+          type={resolvedType}
           placeholder={placeholder}
           className={`
-            w-full px-4 py-3 ${icon ? 'pl-12' : ''} rounded-full
+            w-full px-4 py-3 ${icon ? 'pl-12' : ''} ${isPasswordField ? 'pr-12' : ''} rounded-full
             bg-white dark:bg-slate-800 
             border-2 border-slate-200 dark:border-slate-700
             placeholder-slate-400 dark:placeholder-slate-500
@@ -50,6 +65,21 @@ export function Input({
           `}
           {...props}
         />
+        {isPasswordField && (
+          <button
+            type="button"
+            aria-label={isPasswordVisible ? 'Hide password' : 'Show password'}
+            onClick={() => setIsPasswordVisible((current) => !current)}
+            onBlur={() => setIsPasswordVisible(false)}
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+          >
+            {isPasswordVisible ? (
+              <EyeOff className="h-5 w-5" />
+            ) : (
+              <Eye className="h-5 w-5" />
+            )}
+          </button>
+        )}
       </div>
       {error && (
         <div className="flex items-center gap-2 mt-2 text-sm text-red-600 dark:text-red-400">

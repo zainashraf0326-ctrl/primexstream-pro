@@ -1,11 +1,17 @@
 import { supabase } from '@/lib/supabase-config';
 import {
+  notifyOrderApproved,
+  notifyOrderRejected,
+} from '@/lib/supabase-notifications';
+import {
   addAdminReply,
   getAllOrders,
   getOrderById,
   subscribeToAllOrders,
   updateOrder,
 } from '@/services/dbService';
+import { database, isFirebaseConfigured } from '@/services/firebaseClient';
+import { get, onValue, ref } from 'firebase/database';
 
 // ============ TYPES ============
 
@@ -235,6 +241,24 @@ export async function updateOrderStatus(
 
   await updateOrder(targetUserId, orderId, payload);
 
+  if (status === 'approved') {
+    await notifyOrderApproved(targetUserId, {
+      orderId,
+      planName: existingOrder?.planName || 'Plan',
+      credentials,
+    });
+  }
+
+  if (status === 'rejected') {
+    await notifyOrderRejected(targetUserId, {
+      orderId,
+      reason:
+        additionalData?.rejectReason ||
+        existingOrder?.rejectReason ||
+        'Your order was rejected by the admin team.',
+    });
+  }
+
   const adminMessage =
     status === 'approved'
       ? 'Your order has been approved and your credentials are ready.'
@@ -362,10 +386,57 @@ export async function updateSettings(data: Partial<Settings>) {
 
 // ============ USERS ============
 
+function mapFirebaseUsersSnapshot(value: any) {
+  const users = value && typeof value === 'object' ? value : {};
+
+  return Object.entries(users)
+    .map(([id, row]: [string, any]) => ({
+      id,
+      name: row?.name || 'User',
+      email: row?.email || '',
+      referralCode: row?.referralCode || '',
+      referredBy: row?.referredBy || '',
+      totalReferrals: Number(row?.totalReferrals || 0),
+      credits: Number(row?.credits || 0),
+      walletBalance: Number(row?.walletBalance || 0),
+      usableBalance: Number(row?.usableBalance || 0),
+      createdAt: row?.createdAt || '',
+      raw: row,
+    }))
+    .sort((first, second) => {
+      const firstTime = new Date(first.createdAt || 0).getTime();
+      const secondTime = new Date(second.createdAt || 0).getTime();
+      return secondTime - firstTime;
+    });
+}
+
 export function listenToUsers(callback: (users: any[]) => void) {
+  if (isFirebaseConfigured && database) {
+    const usersRef = ref(database, 'users');
+    const unsubscribe = onValue(usersRef, (snapshot) => {
+      callback(mapFirebaseUsersSnapshot(snapshot.val()));
+    });
+
+    return unsubscribe;
+  }
+
   const load = async () => {
     const { data } = await supabase.from('users').select('*').order('created_at', { ascending: false });
-    callback((data || []).map((u: any) => ({ id: u.id, ...u })));
+    callback(
+      (data || []).map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        referralCode: u.referral_code,
+        referredBy: u.referred_by,
+        totalReferrals: Number(u.total_referrals || 0),
+        credits: Number(u.credits || 0),
+        walletBalance: Number(u.wallet_balance || 0),
+        usableBalance: Number(u.usable_balance || 0),
+        createdAt: u.created_at,
+        raw: u,
+      }))
+    );
   };
   load();
   const channel = supabase
@@ -388,38 +459,81 @@ export function listenToDashboardStats(
     totalRevenue: number;
     totalMembers?: number;
     totalSales?: number;
+    totalReferrals?: number;
+    purchasedReferrals?: number;
+    claimedReferralRewards?: number;
+    activeReferralLinks?: number;
+    activePlans?: number;
   }) => void
 ) {
   const load = async () => {
-    const [allOrders, usersCountResponse] = await Promise.all([
+    const [allOrders, firebaseUsersSnapshot, usersResponse, referralsResponse, plansResponse] = await Promise.all([
       getAllOrders(),
-      supabase.from('users').select('*', { count: 'exact', head: true }),
+      isFirebaseConfigured && database ? get(ref(database, 'users')) : Promise.resolve(null),
+      supabase.from('users').select('id, referral_code'),
+      supabase
+        .from('referrals')
+        .select('id, purchased_plan, reward_claimed, reward_amount'),
+      supabase.from('plans').select('id, is_active'),
     ]);
     const approved = allOrders.filter((o: any) => o.status === 'approved');
     const totalSales = approved.reduce(
       (sum: number, o: any) => sum + Number(o.amount || o.finalPrice || 0),
       0
     );
+    const firebaseUsers = firebaseUsersSnapshot
+      ? mapFirebaseUsersSnapshot(firebaseUsersSnapshot.val())
+      : [];
+    const users = isFirebaseConfigured && database
+      ? firebaseUsers
+      : usersResponse.data || [];
+    const referrals = referralsResponse.data || [];
+    const plans = plansResponse.data || [];
+    const activeReferralLinks = users.filter(
+      (user: any) => Boolean(user.referral_code || user.referralCode)
+    ).length;
+    const purchasedReferrals = referrals.filter(
+      (referral: any) => referral.purchased_plan === true
+    ).length;
+    const claimedReferralRewards = referrals
+      .filter((referral: any) => referral.reward_claimed === true)
+      .reduce(
+        (sum: number, referral: any) => sum + Number(referral.reward_amount || 0),
+        0
+      );
+
     callback({
       totalOrders: allOrders.length,
       pendingOrders: allOrders.filter((o: any) => o.status === 'pending').length,
       approvedOrders: approved.length,
       rejectedOrders: allOrders.filter((o: any) => o.status === 'rejected').length,
       totalRevenue: totalSales,
-      totalMembers: usersCountResponse.count || 0,
+      totalMembers: users.length,
       totalSales,
+      totalReferrals: referrals.length,
+      purchasedReferrals,
+      claimedReferralRewards,
+      activeReferralLinks,
+      activePlans: plans.filter((plan: any) => plan.is_active !== false).length,
     });
   };
   load();
   const stopOrdersSubscription = subscribeToAllOrders(() => {
     void load();
   });
+  const stopFirebaseUsersSubscription =
+    isFirebaseConfigured && database
+      ? onValue(ref(database, 'users'), () => {
+          void load();
+        })
+      : () => {};
   const usersChannel = supabase
     .channel('dashboard-users-watch')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, load)
     .subscribe();
   return () => {
     stopOrdersSubscription();
-    supabase.removeChannel(usersChannel);
+    stopFirebaseUsersSubscription();
+    void supabase.removeChannel(usersChannel);
   };
 }

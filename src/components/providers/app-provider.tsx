@@ -1,22 +1,12 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase-config';
-import {
-  createUser,
-  getUser,
-  getUserByReferralCode,
-  onUserChange,
-  recordReferral,
-  updateUser as updateUserSupabase,
-} from '@/lib/supabase-user-service';
-import { signOutUser, subscribeToAuthChanges } from '@/services/authService';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   ensureUserProfile,
-  getUserData as getFirebaseUserData,
   subscribeToUserData,
   updateUserProfile,
 } from '@/services/dbService';
+import { signOutUser, subscribeToAuthChanges } from '@/services/authService';
 
 export interface User {
   id: string;
@@ -41,182 +31,209 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+function mapUser({
+  id,
+  name,
+  email,
+  referralCode,
+  referredBy,
+  totalReferrals,
+  credits,
+}: {
+  id: string;
+  name: string;
+  email: string;
+  referralCode?: string;
+  referredBy?: string;
+  totalReferrals?: number;
+  credits?: number;
+}): User {
+  return {
+    id,
+    name,
+    email,
+    referralCode,
+    referredBy,
+    totalReferrals: totalReferrals || 0,
+    credits: credits || 0,
+    orders: {},
+    notifications: {},
+    adminReplies: {},
+  };
+}
+
+function getFallbackName(authUser: any) {
+  return (
+    authUser?.displayName ||
+    authUser?.providerData?.[0]?.displayName ||
+    authUser?.email?.split('@')[0] ||
+    'User'
+  );
+}
+
+function formatError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function getPendingSignupProfile(email: string) {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem('primex_pending_signup_profile');
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const storedEmail =
+      typeof parsed?.email === 'string'
+        ? parsed.email.trim().toLowerCase()
+        : '';
+
+    if (!storedEmail || storedEmail !== email.trim().toLowerCase()) {
+      return null;
+    }
+
+    return {
+      email: storedEmail,
+      name: typeof parsed?.name === 'string' ? parsed.name.trim() : '',
+      appliedReferralCode:
+        typeof parsed?.appliedReferralCode === 'string'
+          ? parsed.appliedReferralCode.trim().toUpperCase()
+          : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingSignupProfile(email: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const pending = getPendingSignupProfile(email);
+
+  if (pending) {
+    window.localStorage.removeItem('primex_pending_signup_profile');
+  }
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [firebaseAuthUser, setFirebaseAuthUser] = useState<any>(null);
-  const [legacyAuthUser, setLegacyAuthUser] = useState<any>(null);
 
   useEffect(() => {
-    const unsubscribeFirebase = subscribeToAuthChanges((authUser: any) => {
-      setFirebaseAuthUser(authUser || null);
-    });
+    let active = true;
+    let stopUserSubscription = () => {};
 
-    supabase.auth.getSession().then(({ data }) => {
-      setLegacyAuthUser(data.session?.user || null);
-    });
+    const hydrateUser = async (authUser: any | null) => {
+      stopUserSubscription();
+      stopUserSubscription = () => {};
 
-    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setLegacyAuthUser(session?.user || null);
-    });
-
-    return () => {
-      unsubscribeFirebase();
-      authSub.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const timeoutId = setTimeout(() => setIsLoading(false), 10000);
-    const activeAuthUser = firebaseAuthUser || legacyAuthUser;
-    const isFirebaseSession = Boolean(firebaseAuthUser);
-    let stopFirebaseUserSubscription = () => {};
-    let stopLegacyUserSubscription = () => {};
-
-    const syncLegacyUser = async (uid: string, name: string, email: string) => {
-      let legacyUser = await getUser(uid);
-
-      if (!legacyUser) {
-        const searchParams =
-          typeof window !== 'undefined'
-            ? new URLSearchParams(window.location.search)
-            : new URLSearchParams();
-        const refCode = searchParams.get('ref') || searchParams.get('refCode');
-        const newUserData: any = {
-          name,
-          email,
-          totalReferrals: 0,
-          credits: 0,
-        };
-
-        if (refCode) {
-          const referrer = await getUserByReferralCode(refCode);
-          if (referrer) {
-            newUserData.referredBy = referrer.id;
-          }
-        }
-
-        await createUser(uid, newUserData);
-
-        if (newUserData.referredBy) {
-          await recordReferral(newUserData.referredBy, uid);
-        }
-
-        legacyUser = await getUser(uid);
+      if (!active) {
+        return;
       }
 
-      return legacyUser;
-    };
-
-    const hydrateAuthUser = async () => {
-      if (!activeAuthUser) {
+      if (!authUser) {
         setUser(null);
         setIsLoading(false);
         return;
       }
 
+      setIsLoading(true);
+
+      const id = authUser.uid;
+      const email = authUser.email || '';
+      const pendingSignupProfile = getPendingSignupProfile(email);
+      const name = pendingSignupProfile?.name || getFallbackName(authUser);
+
       try {
-        const uid = activeAuthUser.uid || activeAuthUser.id;
-        const name =
-          activeAuthUser.displayName ||
-          activeAuthUser.user_metadata?.full_name ||
-          activeAuthUser.user_metadata?.name ||
-          'User';
-        const email = activeAuthUser.email || '';
-        let latestLegacyUser: any = null;
+        const profile = await ensureUserProfile(id, {
+          name,
+          email,
+        });
 
-        const mergeUser = (firebaseUserData: any, legacyUserData = latestLegacyUser) => {
-          setUser((currentUser) => ({
-            id: uid,
-            name: firebaseUserData?.name || legacyUserData?.name || name,
-            email: firebaseUserData?.email || legacyUserData?.email || email,
-            referralCode: legacyUserData?.referralCode || currentUser?.referralCode,
-            referredBy: legacyUserData?.referredBy,
-            totalReferrals: legacyUserData?.totalReferrals || 0,
-            credits: legacyUserData?.credits || 0,
-            orders: firebaseUserData?.orders || {},
-            notifications: firebaseUserData?.notifications || {},
-            adminReplies: firebaseUserData?.adminReplies || {},
-          }));
-        };
-
-        if (isFirebaseSession) {
-          await ensureUserProfile(uid, { name, email });
+        if (!active) {
+          return;
         }
 
-        latestLegacyUser = await syncLegacyUser(uid, name, email);
+        const resolvedUser = mapUser({
+          id,
+          name: profile?.name || name,
+          email: profile?.email || email,
+          referralCode: profile?.referralCode,
+          referredBy: profile?.referredBy,
+          totalReferrals: profile?.totalReferrals,
+          credits: profile?.credits,
+        });
 
-        if (isFirebaseSession) {
-          const firebaseUserData = await getFirebaseUserData(uid);
-          mergeUser(firebaseUserData, latestLegacyUser);
+        setUser(resolvedUser);
+        clearPendingSignupProfile(email);
 
-          stopFirebaseUserSubscription = subscribeToUserData(
-            uid,
-            (firebaseUserDataUpdate: any) => {
-              mergeUser(firebaseUserDataUpdate, latestLegacyUser);
-            }
-          );
-        } else {
-          mergeUser(
-            {
-              name,
-              email,
-              orders: {},
-              notifications: {},
-              adminReplies: {},
-            },
-            latestLegacyUser
-          );
-        }
+        stopUserSubscription = subscribeToUserData(id, (updatedUser) => {
+          if (!active) {
+            return;
+          }
 
-        stopLegacyUserSubscription = onUserChange(uid, (updatedUser) => {
-          latestLegacyUser = updatedUser || latestLegacyUser;
-          setUser((currentUser) =>
-            currentUser
-              ? {
-                  ...currentUser,
-                  referralCode:
-                    latestLegacyUser?.referralCode || currentUser.referralCode,
-                  referredBy: latestLegacyUser?.referredBy,
-                  totalReferrals: latestLegacyUser?.totalReferrals || 0,
-                  credits: latestLegacyUser?.credits || 0,
-                }
-              : currentUser
+          setUser(
+            mapUser({
+              id,
+              name: updatedUser?.name || name,
+              email: updatedUser?.email || email,
+              referralCode: updatedUser?.referralCode,
+              referredBy: updatedUser?.referredBy,
+              totalReferrals: updatedUser?.totalReferrals,
+              credits: updatedUser?.credits,
+            })
           );
         });
       } catch (error) {
-        console.error('Error fetching user data:', error);
-        setUser({
-          id: activeAuthUser.uid || activeAuthUser.id,
-          name:
-            activeAuthUser.displayName ||
-            activeAuthUser.user_metadata?.full_name ||
-            'User',
-          email: activeAuthUser.email || '',
-          totalReferrals: 0,
-          credits: 0,
-          orders: {},
-          notifications: {},
-          adminReplies: {},
-        });
+        console.error('Error hydrating app user:', formatError(error));
+
+        if (!active) {
+          return;
+        }
+
+        setUser(
+          mapUser({
+            id,
+            name,
+            email,
+          })
+        );
       } finally {
-        clearTimeout(timeoutId);
-        setIsLoading(false);
+        if (active) {
+          setIsLoading(false);
+        }
       }
     };
 
-    hydrateAuthUser();
+    const unsubscribe = subscribeToAuthChanges((nextUser) => {
+      void hydrateUser(nextUser);
+    });
 
     return () => {
-      clearTimeout(timeoutId);
-      stopFirebaseUserSubscription();
-      stopLegacyUserSubscription();
+      active = false;
+      stopUserSubscription();
+      unsubscribe();
     };
-  }, [firebaseAuthUser, legacyAuthUser]);
+  }, []);
 
   const logout = async () => {
     try {
-      await Promise.allSettled([signOutUser(), supabase.auth.signOut()]);
+      await signOutUser();
       setUser(null);
     } catch (error) {
       console.error('Error logging out:', error);
@@ -224,14 +241,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const updateUser = async (updates: Partial<User>) => {
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
     try {
       setUser({ ...user, ...updates });
-      await Promise.allSettled([
-        updateUserProfile(user.id, updates),
-        updateUserSupabase(user.id, updates),
-      ]);
+      await updateUserProfile(user.id, updates);
     } catch (error) {
       console.error('Error updating user:', error);
     }
@@ -248,8 +264,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 export function useApp() {
   const context = useContext(AppContext);
+
   if (!context) {
     throw new Error('useApp must be used within AppProvider');
   }
+
   return context;
 }

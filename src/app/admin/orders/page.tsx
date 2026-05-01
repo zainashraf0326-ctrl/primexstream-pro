@@ -150,6 +150,8 @@ export default function AdminOrdersPage() {
       );
     });
 
+  const filteredOrders = sortedOrders.filter((order) => order.status === filter);
+
   if (isLoading) {
     return (
       <AdminLayout title="Orders">
@@ -208,12 +210,12 @@ export default function AdminOrdersPage() {
 
         {/* Orders List */}
         <div className="space-y-3">
-          {sortedOrders.length === 0 ? (
+          {filteredOrders.length === 0 ? (
             <Card className="p-12 text-center">
               <p className="text-slate-600 dark:text-slate-400">No {filter} orders found</p>
             </Card>
           ) : (
-            sortedOrders.map((order, index) => {
+            filteredOrders.map((order) => {
               // Parse date properly from Supabase timestamp
               let orderDate = new Date();
               if (order.createdAt?.toDate && typeof order.createdAt.toDate === 'function') {
@@ -453,4 +455,3 @@ export default function AdminOrdersPage() {
     </AdminLayout>
   );
 }
-

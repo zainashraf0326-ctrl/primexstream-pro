@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { FaPaypal, FaRegCreditCard, FaUniversity } from 'react-icons/fa';
 import { SiBinance } from 'react-icons/si';
 import { GiMoneyStack } from 'react-icons/gi';
-import { CheckCircle2, Loader } from 'lucide-react';
+import { CheckCircle2, Download, Loader, Share2, X } from 'lucide-react';
 import { useApp } from '@/components/providers/app-provider';
 import { useGuestCheckout } from '@/components/providers/guest-checkout-context';
 import { AppLayout } from '@/components/app-layout';
@@ -27,6 +27,57 @@ const trustBadges = [
   { title: 'Trusted by Thousands' },
 ];
 
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string' && maybeMessage.trim()) {
+      return maybeMessage;
+    }
+
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== '{}') {
+        return serialized;
+      }
+    } catch {}
+  }
+
+  return fallbackMessage;
+}
+
+function formatPaymentMethodLabel(method: PaymentMethod | null) {
+  if (!method) return 'Not selected';
+
+  const labels: Record<PaymentMethod, string> = {
+    remitly: 'Remitly',
+    binance: 'Binance',
+    paypal: 'PayPal',
+    cashapp: 'Cash App',
+    zelle: 'Zelle',
+  };
+
+  return labels[method];
+}
+
+type ReceiptData = {
+  orderId: string;
+  transactionId: string;
+  customerName: string;
+  customerEmail: string;
+  planName: string;
+  paymentMethod: string;
+  amount: number;
+  createdAt: string;
+};
+
 function PaymentContent() {
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [currentStep, setCurrentStep] = useState<0 | 1 | 2>(0);
@@ -36,7 +87,7 @@ function PaymentContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [receipt, setReceipt] = useState<{ orderId: string; transactionId: string } | null>(null);
+  const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [guestEmail, setGuestEmail] = useState('');
@@ -77,6 +128,7 @@ function PaymentContent() {
   const isSpecialPayment = method === 'remitly' || method === 'binance';
   const extraDiscount = isSpecialPayment ? Math.round(salePrice * 0.3 * 100) / 100 : 0;
   const finalPrice = Math.max(0, salePrice - extraDiscount);
+  const successRedirectPath = isLoggedIn ? '/orders' : '/dashboard';
 
   const paymentMethods = [
     { id: 'binance', name: 'Binance', subtitle: 'Crypto Payment', icon: SiBinance, isDiscounted: true },
@@ -160,6 +212,65 @@ function PaymentContent() {
     setCurrentStep(1);
   };
 
+  const buildReceiptText = (data: ReceiptData) => {
+    const formattedDate = new Intl.DateTimeFormat('en-US', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(data.createdAt));
+
+    return [
+      'PrimeXstream Pro Payment Receipt',
+      `Order ID: ${data.orderId}`,
+      `Customer Name: ${data.customerName}`,
+      `Customer Email: ${data.customerEmail}`,
+      `Plan Name: ${data.planName}`,
+      `Payment Method: ${data.paymentMethod}`,
+      `Transaction ID: ${data.transactionId}`,
+      `Date & Time: ${formattedDate}`,
+      `Total Paid: $${data.amount.toFixed(2)}`,
+    ].join('\n');
+  };
+
+  const handleShareReceipt = async () => {
+    if (!receipt) return;
+
+    const text = buildReceiptText(receipt);
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'PrimeXstream Pro Receipt',
+          text,
+        });
+        return;
+      } catch (error) {
+        console.warn('Receipt share was dismissed or failed:', error);
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      console.error('Could not copy receipt text:', error);
+    }
+  };
+
+  const handleDownloadReceipt = () => {
+    if (!receipt || typeof window === 'undefined') return;
+
+    const blob = new Blob([buildReceiptText(receipt)], {
+      type: 'text/plain;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `receipt-${receipt.orderId}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -201,6 +312,7 @@ function PaymentContent() {
       const orderData: any = {
         planId,
         plan: plan?.name || 'IPTV Plan',
+        planName: plan?.name || 'IPTV Plan',
         originalPrice,
         salePrice,
         finalPrice,
@@ -211,6 +323,9 @@ function PaymentContent() {
         status: 'pending',
         date: new Date().toLocaleDateString(),
         user: userName,
+        userName,
+        userEmail,
+        email: userEmail,
       };
 
       // Add guest checkout markers
@@ -221,15 +336,25 @@ function PaymentContent() {
       }
 
       const order = await createOrder(userId, orderData);
-      setReceipt({ orderId: order.id || `ORD${Date.now()}`, transactionId: txId });
+      setReceipt({
+        orderId: order.id || `ORD${Date.now()}`,
+        transactionId: txId,
+        customerName: userName,
+        customerEmail: userEmail,
+        planName: orderData.planName,
+        paymentMethod: formatPaymentMethodLabel(method),
+        amount: finalPrice,
+        createdAt: order.createdAt || new Date().toISOString(),
+      });
       setSuccess(true);
 
       // Show post-payment signup modal if guest
       if (isGuest) {
         setShowPostPaymentModal(true);
       }
-    } catch (err: any) {
-      setError(err.message || 'Error processing payment');
+    } catch (err) {
+      console.error('Payment submission failed:', err);
+      setError(getErrorMessage(err, 'Error processing payment'));
     } finally {
       setLoading(false);
     }
@@ -273,19 +398,101 @@ function PaymentContent() {
           )}
 
           {success && receipt ? (
-            <Card className="glass border-emerald-200 dark:border-emerald-700/30">
-              <CardContent className="space-y-4 pt-8">
-                <h3 className="text-2xl font-bold text-emerald-600">Payment Submitted</h3>
-                <p className="text-slate-700 dark:text-slate-300">Order ID: {receipt.orderId}</p>
-                <p className="text-slate-700 dark:text-slate-300">Transaction ID: {receipt.transactionId}</p>
-                {!isLoggedIn && (
-                  <p className="text-sm text-slate-600 dark:text-slate-400">
-                    A confirmation has been sent to {guestEmail}
-                  </p>
-                )}
-                <Button onClick={() => router.push('/dashboard')} className="bg-emerald-600 hover:bg-emerald-700">
-                  Go to Dashboard
-                </Button>
+            <Card className="mx-auto max-w-3xl glass overflow-hidden border-emerald-200 dark:border-emerald-700/30 shadow-[0_24px_80px_-36px_rgba(16,185,129,0.45)]">
+              <CardContent className="space-y-6 p-5 md:p-7">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Payment Submitted
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Payment Receipt</h3>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Your order is saved and waiting for admin approval.
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push(successRedirectPath)}
+                    className="gap-2 rounded-full"
+                  >
+                    <X className="h-4 w-4" />
+                    Close
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Customer Name</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{receipt.customerName}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Customer Email</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white break-all">{receipt.customerEmail}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Plan Name</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{receipt.planName}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Payment Method</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{receipt.paymentMethod}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Date & Time</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
+                      {new Intl.DateTimeFormat('en-US', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      }).format(new Date(receipt.createdAt))}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 dark:border-emerald-800 dark:bg-emerald-900/20">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Total Paid</p>
+                    <p className="mt-2 text-lg font-bold text-emerald-700 dark:text-emerald-300">${receipt.amount.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-950/40">
+                  <div className="flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-semibold text-slate-900 dark:text-white">Order ID: {receipt.orderId}</p>
+                      <p className="mt-1 text-slate-600 dark:text-slate-400 break-all">
+                        Transaction ID: {receipt.transactionId}
+                      </p>
+                    </div>
+                    {!isLoggedIn && (
+                      <p className="text-slate-600 dark:text-slate-400">
+                        Confirmation sent to {guestEmail}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    onClick={handleShareReceipt}
+                    variant="outline"
+                    className="gap-2 rounded-2xl"
+                  >
+                    <Share2 className="h-4 w-4" />
+                    Share Receipt
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleDownloadReceipt}
+                    className="gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download Receipt
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ) : (

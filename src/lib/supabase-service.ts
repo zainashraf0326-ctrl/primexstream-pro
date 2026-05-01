@@ -8,7 +8,6 @@ export interface User {
   email: string;
   totalReferrals?: number;
   referralCode?: string;
-  appliedReferralCode?: string;
   ordersCount?: number;
   approvedOrders?: number;
   credits?: number;
@@ -199,12 +198,13 @@ export async function getAllOrders() {
 export function listenToAllOrders(callback: (orders: any[]) => void) {
   const fetchNow = async () => callback(await getAllOrders());
   fetchNow();
+  const channelName = `orders-all-${Math.random().toString(36).slice(2)}`;
   const channel = supabase
-    .channel('orders-all')
+    .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchNow)
     .subscribe();
   return () => {
-    supabase.removeChannel(channel);
+    void supabase.removeChannel(channel);
   };
 }
 
@@ -221,10 +221,7 @@ export async function updateUserData(userId: string, updates: any) {
     mapped.referred_by = mapped.referredBy;
     delete mapped.referredBy;
   }
-  if (mapped.appliedReferralCode !== undefined) {
-    mapped.applied_referral_code = mapped.appliedReferralCode;
-    delete mapped.appliedReferralCode;
-  }
+  delete mapped.appliedReferralCode;
   if (mapped.totalReferrals !== undefined) {
     mapped.total_referrals = mapped.totalReferrals;
     delete mapped.totalReferrals;
@@ -594,13 +591,15 @@ const DEFAULT_CONFIG: ConfigData = {
 
 export async function initializeConfig(): Promise<ConfigData> {
   const { error } = await supabase.from('app_config').upsert({ id: 'main', value: DEFAULT_CONFIG });
-  if (error) console.error('Error initializing config:', error);
+  if (error) {
+    return DEFAULT_CONFIG;
+  }
   return DEFAULT_CONFIG;
 }
 
 export async function getConfig(): Promise<ConfigData> {
   const { data, error } = await supabase.from('app_config').select('value').eq('id', 'main').maybeSingle();
-  if (error || !data?.value) return initializeConfig();
+  if (error || !data?.value) return DEFAULT_CONFIG;
   return data.value as ConfigData;
 }
 
@@ -800,9 +799,8 @@ export async function applyReferralCode(userId: string, referralCode: string): P
     const currentUserData = await getUserData(userId);
     const currentUserName = currentUserData?.name || 'User';
 
-    await updateUserData(userId, { 
+    await updateUserData(userId, {
       referredBy: codeOwnerId,
-      appliedReferralCode: referralCode
     });
 
     const referrerData = await getUserData(codeOwnerId);

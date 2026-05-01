@@ -18,6 +18,11 @@ export interface Referral {
   createdAt?: string;
 }
 
+interface EnsureUserResult {
+  created: boolean;
+  user: User | null;
+}
+
 function makeReferralCode() {
   return `REF${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
 }
@@ -36,7 +41,7 @@ function mapUser(row: any): User {
 }
 
 export async function createUser(userId: string, userData: Partial<User>) {
-  const { error } = await supabase.from('users').upsert({
+  const { error } = await supabase.from('users').insert({
     id: userId,
     name: userData.name || 'User',
     email: userData.email || '',
@@ -46,6 +51,51 @@ export async function createUser(userId: string, userData: Partial<User>) {
     credits: userData.credits || 0,
   });
   if (error) throw error;
+}
+
+export async function ensureUser(
+  userId: string,
+  userData: Partial<User> = {}
+): Promise<EnsureUserResult> {
+  const existing = await getUser(userId);
+
+  if (!existing) {
+    await createUser(userId, userData);
+    return {
+      created: true,
+      user: await getUser(userId),
+    };
+  }
+
+  const updates: Partial<User> = {};
+
+  if (userData.name && existing.name !== userData.name) {
+    updates.name = userData.name;
+  }
+
+  if (userData.email && existing.email !== userData.email) {
+    updates.email = userData.email;
+  }
+
+  if (userData.referredBy && !existing.referredBy) {
+    updates.referredBy = userData.referredBy;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await updateUser(userId, updates);
+    return {
+      created: false,
+      user: {
+        ...existing,
+        ...updates,
+      },
+    };
+  }
+
+  return {
+    created: false,
+    user: existing,
+  };
 }
 
 export async function getUser(userId: string): Promise<User | null> {

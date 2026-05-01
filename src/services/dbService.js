@@ -15,6 +15,11 @@ import {
   listenToUserOrders as legacyListenToUserOrders,
   updateOrder as legacyUpdateOrder,
 } from '@/lib/supabase-service';
+import {
+  createNotification,
+  getAdminUserId,
+  notifyOrderCreated,
+} from '@/lib/supabase-notifications';
 import { isFirebaseConfigured } from './firebaseClient';
 import { assertFirebaseConfigured, database } from './firebaseClient';
 
@@ -39,14 +44,96 @@ function sortByCreatedAtDesc(items) {
   });
 }
 
+function generateReferralCode() {
+  return `REF${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function formatErrorMessage(error, fallbackMessage) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === 'object') {
+    if (typeof error.message === 'string' && error.message.trim()) {
+      return error.message;
+    }
+
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== '{}') {
+        return serialized;
+      }
+    } catch {}
+  }
+
+  return fallbackMessage;
+}
+
 function buildDefaultUserData(profile = {}) {
   return {
     name: profile.name || 'User',
     email: profile.email || '',
+    referralCode: profile.referralCode || generateReferralCode(),
+    referredBy: profile.referredBy || '',
+    totalReferrals: Number(profile.totalReferrals || 0),
+    credits: Number(profile.credits || 0),
+    walletBalance: Number(profile.walletBalance || 0),
+    usableBalance: Number(profile.usableBalance || 0),
+    createdAt: profile.createdAt || new Date().toISOString(),
     orders: {},
     notifications: {},
     adminReplies: {},
   };
+}
+
+function isGuestUid(uid) {
+  return typeof uid === 'string' && uid.startsWith('guest_');
+}
+
+async function notifyAdminOnly(order, orderOwnerName) {
+  const adminId = await getAdminUserId();
+  if (!adminId) return;
+
+  await createNotification(
+    adminId,
+    'admin',
+    'New Order',
+    `${orderOwnerName} ordered ${order.planName || order.plan || 'Plan'} for ${Number(
+      order.finalPrice || order.amount || 0
+    )}`,
+    {
+      orderId: order.id,
+      orderAmount: Number(order.finalPrice || order.amount || 0),
+      orderPlan: order.planName || order.plan || 'Plan',
+    },
+    '/admin/orders'
+  );
+}
+
+async function notifyOrderCreatedForFlow(uid, order, orderOwnerName) {
+  if (!uid || isGuestUid(uid) || order.isGuest) {
+    await notifyAdminOnly(order, orderOwnerName);
+    return;
+  }
+
+  await notifyOrderCreated(uid, orderOwnerName, {
+    orderId: order.id,
+    planName: order.planName || order.plan || 'Plan',
+    amount: Number(order.finalPrice || order.amount || 0),
+  });
+}
+
+function queueOrderCreatedNotification(uid, order, orderOwnerName) {
+  void notifyOrderCreatedForFlow(uid, order, orderOwnerName).catch((error) => {
+    console.warn(
+      'Order notification failed:',
+      formatErrorMessage(error, 'Unknown order notification error')
+    );
+  });
 }
 
 function normalizeOrder(uid, orderId, order, userProfile = {}) {
@@ -116,6 +203,14 @@ export async function ensureUserProfile(uid, profile = {}) {
   const nextUser = {
     name: existingUser.name || profile.name || 'User',
     email: existingUser.email || profile.email || '',
+    referralCode:
+      existingUser.referralCode || profile.referralCode || generateReferralCode(),
+    referredBy: existingUser.referredBy || profile.referredBy || '',
+    totalReferrals: Number(existingUser.totalReferrals || profile.totalReferrals || 0),
+    credits: Number(existingUser.credits || profile.credits || 0),
+    walletBalance: Number(existingUser.walletBalance || profile.walletBalance || 0),
+    usableBalance: Number(existingUser.usableBalance || profile.usableBalance || 0),
+    createdAt: existingUser.createdAt || profile.createdAt || new Date().toISOString(),
     orders: ensureObject(existingUser.orders),
     notifications: ensureObject(existingUser.notifications),
     adminReplies: ensureObject(existingUser.adminReplies),
@@ -143,6 +238,9 @@ export async function getUserData(uid) {
   return {
     name: user.name || 'User',
     email: user.email || '',
+    referralCode: user.referralCode || '',
+    referredBy: user.referredBy || '',
+    totalReferrals: Number(user.totalReferrals || 0),
     orders: ensureObject(user.orders),
     notifications: ensureObject(user.notifications),
     adminReplies: ensureObject(user.adminReplies),
@@ -164,39 +262,80 @@ export async function updateUserProfile(uid, updates = {}) {
 export async function createOrder(uid, orderData) {
   if (!isFirebaseConfigured) {
     const order = await legacyCreateOrder(uid, orderData);
-    return normalizeOrder(uid, order.id, order, {
+    const normalizedOrder = normalizeOrder(uid, order.id, order, {
       email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
     });
+
+    queueOrderCreatedNotification(
+      uid,
+      normalizedOrder,
+      orderData.userName || orderData.user || orderData.guestName || 'User'
+    );
+
+    return normalizedOrder;
   }
 
-  await ensureUserProfile(uid, {
-    name: orderData.user || orderData.userName || orderData.guestName || 'User',
-    email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
-  });
+  try {
+    const profile = await ensureUserProfile(uid, {
+      name: orderData.user || orderData.userName || orderData.guestName || 'User',
+      email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
+    });
 
-  const ordersRef = getDatabaseRef(`users/${uid}/orders`);
-  const orderRef = push(ordersRef);
-  const timestamp = new Date().toISOString();
+    const ordersRef = getDatabaseRef(`users/${uid}/orders`);
+    const orderRef = push(ordersRef);
+    const timestamp = new Date().toISOString();
 
-  const normalizedOrder = {
-    ...orderData,
-    id: orderRef.key,
-    status: orderData.status || 'pending',
-    paymentProof:
-      orderData.paymentProof ||
-      orderData.paymentProofUrl ||
-      orderData.payment_proof_url ||
-      '',
-    paymentProofPath:
-      orderData.paymentProofPath || orderData.payment_proof_path || '',
-    createdAt: orderData.createdAt || timestamp,
-    updatedAt: timestamp,
-  };
+    const normalizedOrder = {
+      ...orderData,
+      id: orderRef.key,
+      status: orderData.status || 'pending',
+      paymentProof:
+        orderData.paymentProof ||
+        orderData.paymentProofUrl ||
+        orderData.payment_proof_url ||
+        '',
+      paymentProofPath:
+        orderData.paymentProofPath || orderData.payment_proof_path || '',
+      createdAt: orderData.createdAt || timestamp,
+      updatedAt: timestamp,
+    };
 
-  await set(orderRef, normalizedOrder);
-  return normalizeOrder(uid, orderRef.key, normalizedOrder, {
-    email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
-  });
+    await set(orderRef, normalizedOrder);
+    const createdOrder = normalizeOrder(uid, orderRef.key, normalizedOrder, {
+      email:
+        orderData.userEmail ||
+        orderData.email ||
+        orderData.guestEmail ||
+        profile.email ||
+        '',
+    });
+
+    queueOrderCreatedNotification(
+      uid,
+      createdOrder,
+      orderData.userName || orderData.user || orderData.guestName || profile.name || 'User'
+    );
+
+    return createdOrder;
+  } catch (firebaseError) {
+    console.warn(
+      'Firebase order creation failed, falling back to Supabase orders:',
+      formatErrorMessage(firebaseError, 'Unknown Firebase order error')
+    );
+
+    const order = await legacyCreateOrder(uid, orderData);
+    const normalizedOrder = normalizeOrder(uid, order.id, order, {
+      email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
+    });
+
+    queueOrderCreatedNotification(
+      uid,
+      normalizedOrder,
+      orderData.userName || orderData.user || orderData.guestName || 'User'
+    );
+
+    return normalizedOrder;
+  }
 }
 
 export async function updateOrder(uid, orderId, updates = {}) {
@@ -256,6 +395,9 @@ export function subscribeToUserData(uid, callback) {
     callback({
       name: user.name || 'User',
       email: user.email || '',
+      referralCode: user.referralCode || '',
+      referredBy: user.referredBy || '',
+      totalReferrals: Number(user.totalReferrals || 0),
       orders: ensureObject(user.orders),
       notifications: ensureObject(user.notifications),
       adminReplies: ensureObject(user.adminReplies),

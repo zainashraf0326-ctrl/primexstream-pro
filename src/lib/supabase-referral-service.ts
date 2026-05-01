@@ -1,6 +1,6 @@
 /**
  * REAL PRODUCTION REFERRAL SYSTEM
- * 
+ *
  * Tracks referrals in Supabase with:
  * - Referrer/Referred relationship
  * - Purchase status tracking
@@ -9,8 +9,9 @@
  */
 
 import { supabase } from '@/lib/supabase-config';
-
-// ===== TYPES =====
+import { get, ref, update } from 'firebase/database';
+import { database, isFirebaseConfigured } from '@/services/firebaseClient';
+import { ensureUser as ensureSupabaseUser } from '@/lib/supabase-user-service';
 
 export interface ReferralRecord {
   id: string;
@@ -31,12 +32,175 @@ export interface ReferralRecord {
   status: 'joined' | 'purchased' | 'claimed';
 }
 
-// ===== CREATE REFERRAL RECORD =====
+type ReferralUserProfile = {
+  id: string;
+  name: string;
+  email: string;
+  referralCode: string;
+  referredBy?: string;
+};
 
-/**
- * Track referral when referred user joins
- * Call this when new user signs up with referral code
- */
+function normalizeReferralCode(referralCode: string) {
+  return referralCode.trim().toUpperCase();
+}
+
+async function getSupabaseUserByReferralCode(
+  referralCode: string
+): Promise<ReferralUserProfile | null> {
+  const { data } = await supabase
+    .from('users')
+    .select('id,name,email,referral_code,referred_by')
+    .eq('referral_code', referralCode)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    name: data.name || 'User',
+    email: data.email || '',
+    referralCode: data.referral_code || '',
+    referredBy: data.referred_by || '',
+  };
+}
+
+async function getFirebaseUserByReferralCode(
+  referralCode: string
+): Promise<ReferralUserProfile | null> {
+  if (!isFirebaseConfigured || !database) return null;
+
+  const snapshot = await get(ref(database, 'users'));
+  if (!snapshot.exists()) return null;
+
+  const users = snapshot.val() || {};
+  const match = Object.entries(users).find(([, value]: any) => {
+    return normalizeReferralCode(value?.referralCode || '') === referralCode;
+  });
+
+  if (!match) return null;
+
+  const [id, value]: any = match;
+  return {
+    id,
+    name: value?.name || 'User',
+    email: value?.email || '',
+    referralCode: value?.referralCode || '',
+    referredBy: value?.referredBy || '',
+  };
+}
+
+async function getUserByReferralCode(
+  referralCode: string
+): Promise<ReferralUserProfile | null> {
+  const supabaseUser = await getSupabaseUserByReferralCode(referralCode);
+  if (supabaseUser) return supabaseUser;
+
+  return getFirebaseUserByReferralCode(referralCode);
+}
+
+async function getUserProfile(userId: string): Promise<ReferralUserProfile | null> {
+  const { data } = await supabase
+    .from('users')
+    .select('id,name,email,referral_code,referred_by')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (data) {
+    return {
+      id: data.id,
+      name: data.name || 'User',
+      email: data.email || '',
+      referralCode: data.referral_code || '',
+      referredBy: data.referred_by || '',
+    };
+  }
+
+  if (!isFirebaseConfigured || !database) return null;
+
+  const snapshot = await get(ref(database, `users/${userId}`));
+  if (!snapshot.exists()) return null;
+
+  const value: any = snapshot.val() || {};
+  return {
+    id: userId,
+    name: value?.name || 'User',
+    email: value?.email || '',
+    referralCode: value?.referralCode || '',
+    referredBy: value?.referredBy || '',
+  };
+}
+
+async function ensureSupabaseUserRecord(profile: ReferralUserProfile | null) {
+  if (!profile?.id) return;
+
+  try {
+    // Check if user exists
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id, referral_code')
+      .eq('id', profile.id)
+      .maybeSingle();
+
+    if (existingUser) {
+      // User exists - ensure they have a referral code
+      if (!existingUser.referral_code) {
+        const newCode = `REF${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+        await supabase
+          .from('users')
+          .update({ referral_code: newCode })
+          .eq('id', profile.id);
+      }
+    } else {
+      // User doesn't exist - create them
+      const referralCode = profile.referralCode || `REF${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      const { error } = await supabase
+        .from('users')
+        .insert({
+          id: profile.id,
+          name: profile.name || 'User',
+          email: profile.email || '',
+          referral_code: referralCode,
+          referred_by: profile.referredBy || null,
+          total_referrals: 0,
+          credits: 0,
+          usable_balance: 0,
+          wallet_balance: 0,
+        });
+
+      if (error) {
+        console.warn('Could not create Supabase user record:', profile.id, error);
+      }
+    }
+  } catch (err) {
+    console.warn('Error ensuring Supabase user record:', err);
+  }
+}
+
+async function setUserReferredBy(userId: string, referrerId: string) {
+  const { data } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (data?.id) {
+    const { error } = await supabase
+      .from('users')
+      .update({ referred_by: referrerId })
+      .eq('id', userId);
+
+    if (error) {
+      console.warn('Could not update Supabase referred_by:', error);
+    }
+  }
+
+  if (isFirebaseConfigured && database) {
+    await update(ref(database, `users/${userId}`), {
+      referredBy: referrerId,
+    });
+  }
+}
+
 export async function createReferralRecord(
   referrerUid: string,
   referredUid: string,
@@ -46,33 +210,60 @@ export async function createReferralRecord(
   referredName?: string,
   referredEmail?: string
 ): Promise<string | null> {
-  const { data, error } = await supabase.from('referrals').insert({
-    referrer_uid: referrerUid,
-    referrer_name: referrerName || null,
-    referrer_email: referrerEmail || null,
-    referred_uid: referredUid,
-    referred_name: referredName || null,
-    referred_email: referredEmail || null,
-    referral_code: referralCode,
-    purchased_plan: false,
-    purchased_plan_name: null,
-    reward_amount: 5,
-    reward_claimed: false,
-    status: 'joined',
-  }).select('id').single();
-  if (error) {
-    console.error('Error creating referral record:', error);
+  // Validate users exist in Supabase before creating referral record
+  const { data: referrerExists, error: refErr } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', referrerUid)
+    .maybeSingle();
+
+  if (refErr || !referrerExists) {
+    console.error('Referrer user not found in Supabase:', referrerUid, refErr);
     return null;
   }
+
+  const { data: referredExists, error: refedErr } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', referredUid)
+    .maybeSingle();
+
+  if (refedErr || !referredExists) {
+    console.error('Referred user not found in Supabase:', referredUid, refedErr);
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('referrals')
+    .insert({
+      referrer_uid: referrerUid,
+      referrer_name: referrerName || null,
+      referrer_email: referrerEmail || null,
+      referred_uid: referredUid,
+      referred_name: referredName || null,
+      referred_email: referredEmail || null,
+      referral_code: referralCode,
+      purchased_plan: false,
+      purchased_plan_name: null,
+      reward_amount: 5,
+      reward_claimed: false,
+      status: 'joined',
+    })
+    .select('id')
+    .single();
+
+  if (error) {
+    console.error('Error creating referral record:', error, {
+      referrerUid,
+      referredUid,
+      referralCode,
+    });
+    return null;
+  }
+
   return data.id;
 }
 
-// ===== UPDATE REFERRAL STATUS =====
-
-/**
- * Mark referral as purchased when referred user buys subscription
- * Called after successful order/payment
- */
 export async function markReferralAsPurchased(
   referredUid: string,
   planName: string
@@ -87,15 +278,10 @@ export async function markReferralAsPurchased(
     })
     .eq('referred_uid', referredUid)
     .eq('purchased_plan', false);
+
   if (error) console.error('Error marking referral as purchased:', error);
 }
 
-// ===== CLAIM REWARD =====
-
-/**
- * Claim reward amount to referrer's wallet
- * Uses transaction to prevent duplicate claims
- */
 export async function claimReferralReward(
   referrerUid: string,
   referralId: string,
@@ -119,7 +305,11 @@ export async function claimReferralReward(
   const currentBalance = Number(user.usable_balance || user.wallet_balance || 0);
   const { error: referralUpdateErr } = await supabase
     .from('referrals')
-    .update({ reward_claimed: true, claimed_at: new Date().toISOString(), status: 'claimed' })
+    .update({
+      reward_claimed: true,
+      claimed_at: new Date().toISOString(),
+      status: 'claimed',
+    })
     .eq('id', referralId);
   if (referralUpdateErr) return false;
 
@@ -142,15 +332,10 @@ export async function claimReferralReward(
     balance_before: currentBalance,
     balance_after: currentBalance + rewardAmount,
   });
+
   return true;
 }
 
-// ===== REAL-TIME LISTENERS =====
-
-/**
- * Listen to all referrals for a specific user (as referrer)
- * Returns real-time updates when status changes
- */
 export function listenToMyReferrals(
   referrerUid: string,
   callback: (referrals: ReferralRecord[]) => void
@@ -161,38 +346,45 @@ export function listenToMyReferrals(
       .select('*')
       .eq('referrer_uid', referrerUid)
       .order('joined_at', { ascending: false });
-    callback((data || []).map((r: any) => ({
-      id: r.id,
-      referrerUid: r.referrer_uid,
-      referrerName: r.referrer_name,
-      referrerEmail: r.referrer_email,
-      referredUid: r.referred_uid,
-      referredName: r.referred_name,
-      referredEmail: r.referred_email,
-      referralCode: r.referral_code,
-      joinedAt: r.joined_at,
-      purchasedPlan: r.purchased_plan,
-      purchasedAt: r.purchased_at,
-      purchasedPlanName: r.purchased_plan_name,
-      rewardAmount: r.reward_amount,
-      rewardClaimed: r.reward_claimed,
-      claimedAt: r.claimed_at,
-      status: r.status,
-    })));
+
+    callback(
+      (data || []).map((r: any) => ({
+        id: r.id,
+        referrerUid: r.referrer_uid,
+        referrerName: r.referrer_name,
+        referrerEmail: r.referrer_email,
+        referredUid: r.referred_uid,
+        referredName: r.referred_name,
+        referredEmail: r.referred_email,
+        referralCode: r.referral_code,
+        joinedAt: r.joined_at,
+        purchasedPlan: r.purchased_plan,
+        purchasedAt: r.purchased_at,
+        purchasedPlanName: r.purchased_plan_name,
+        rewardAmount: r.reward_amount,
+        rewardClaimed: r.reward_claimed,
+        claimedAt: r.claimed_at,
+        status: r.status,
+      }))
+    );
   };
-  load();
+
+  void load();
+
   const channel = supabase
     .channel(`my-referrals-${referrerUid}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'referrals', filter: `referrer_uid=eq.${referrerUid}` }, load)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'referrals', filter: `referrer_uid=eq.${referrerUid}` },
+      load
+    )
     .subscribe();
+
   return () => {
     supabase.removeChannel(channel);
   };
 }
 
-/**
- * Get referrals by status
- */
 export function listenToReferralsByStatus(
   referrerUid: string,
   status: 'joined' | 'purchased' | 'claimed',
@@ -205,21 +397,26 @@ export function listenToReferralsByStatus(
       .eq('referrer_uid', referrerUid)
       .eq('status', status)
       .order('joined_at', { ascending: false });
+
     callback((data || []) as any);
   };
-  load();
+
+  void load();
+
   const channel = supabase
     .channel(`referrals-status-${referrerUid}-${status}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'referrals', filter: `referrer_uid=eq.${referrerUid}` }, load)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'referrals', filter: `referrer_uid=eq.${referrerUid}` },
+      load
+    )
     .subscribe();
+
   return () => {
     supabase.removeChannel(channel);
   };
 }
 
-/**
- * Get referral stats
- */
 export async function getReferralStats(referrerUid: string): Promise<{
   total: number;
   joined: number;
@@ -228,53 +425,138 @@ export async function getReferralStats(referrerUid: string): Promise<{
   totalEarnings: number;
   pendingRewards: number;
 }> {
-  const { data, error } = await supabase.from('referrals').select('*').eq('referrer_uid', referrerUid);
+  const { data, error } = await supabase
+    .from('referrals')
+    .select('*')
+    .eq('referrer_uid', referrerUid);
+
   if (error || !data) {
-    return { total: 0, joined: 0, purchased: 0, claimed: 0, totalEarnings: 0, pendingRewards: 0 };
+    return {
+      total: 0,
+      joined: 0,
+      purchased: 0,
+      claimed: 0,
+      totalEarnings: 0,
+      pendingRewards: 0,
+    };
   }
+
   return {
     total: data.length,
     joined: data.filter((r: any) => r.status === 'joined').length,
     purchased: data.filter((r: any) => r.status === 'purchased').length,
     claimed: data.filter((r: any) => r.status === 'claimed').length,
-    totalEarnings: data.filter((r: any) => r.reward_claimed).reduce((sum: number, r: any) => sum + Number(r.reward_amount || 0), 0),
-    pendingRewards: data.filter((r: any) => r.purchased_plan && !r.reward_claimed).reduce((sum: number, r: any) => sum + Number(r.reward_amount || 0), 0),
+    totalEarnings: data
+      .filter((r: any) => r.reward_claimed)
+      .reduce((sum: number, r: any) => sum + Number(r.reward_amount || 0), 0),
+    pendingRewards: data
+      .filter((r: any) => r.purchased_plan && !r.reward_claimed)
+      .reduce((sum: number, r: any) => sum + Number(r.reward_amount || 0), 0),
   };
 }
 
-// ===== APPLY REFERRAL CODE =====
-
-/**
- * Apply a referral code to current user
- * Validates code and creates referral relationship
- */
 export async function applyReferralCode(
   currentUserId: string,
   referralCode: string
 ): Promise<{ success: boolean; message: string; referrerId?: string }> {
-  if (!referralCode.trim()) return { success: false, message: 'Please enter a referral code' };
-  if (!currentUserId) return { success: false, message: 'Please login first' };
-  const { data: referrerData } = await supabase.from('users').select('*').eq('referral_code', referralCode.trim()).maybeSingle();
-  if (!referrerData) return { success: false, message: 'Invalid referral code' };
-  const referrerId = referrerData.id;
-  if (referrerId === currentUserId) return { success: false, message: 'You cannot use your own referral code' };
+  try {
+    const normalizedCode = normalizeReferralCode(referralCode);
 
-  const { data: existing } = await supabase.from('referrals').select('id').eq('referred_uid', currentUserId).eq('referrer_uid', referrerId).limit(1);
-  if (existing && existing.length > 0) return { success: false, message: 'This code has already been applied' };
+    if (!normalizedCode) {
+      return { success: false, message: 'Please enter a referral code' };
+    }
 
-  const { data: circular } = await supabase.from('referrals').select('id').eq('referrer_uid', currentUserId).eq('referred_uid', referrerId).limit(1);
-  if (circular && circular.length > 0) return { success: false, message: 'Circular referrals are not allowed. You already referred this person!' };
+    if (!currentUserId) {
+      return { success: false, message: 'Please login first' };
+    }
 
-  const { data: currentUserData } = await supabase.from('users').select('*').eq('id', currentUserId).maybeSingle();
-  const recordId = await createReferralRecord(
-    referrerId,
-    currentUserId,
-    referralCode.trim(),
-    referrerData.name || 'User',
-    referrerData.email || '',
-    currentUserData?.name || 'User',
-    currentUserData?.email || ''
-  );
-  if (!recordId) return { success: false, message: 'Failed to apply referral code. Please try again.' };
-  return { success: true, message: `You're now part of ${referrerData.name || 'their'} team! 🎉`, referrerId };
+    const referrerData = await getUserByReferralCode(normalizedCode);
+    if (!referrerData) {
+      return { success: false, message: 'Invalid referral code' };
+    }
+
+    const referrerId = referrerData.id;
+    if (referrerId === currentUserId) {
+      return { success: false, message: 'You cannot use your own referral code' };
+    }
+
+    const currentUserData = await getUserProfile(currentUserId);
+    if (!currentUserData) {
+      return {
+        success: false,
+        message: 'Could not load your profile. Please log in again and retry.',
+      };
+    }
+
+    const { data: existingAny } = await supabase
+      .from('referrals')
+      .select('id, referrer_uid')
+      .eq('referred_uid', currentUserId)
+      .limit(1);
+
+    if (existingAny && existingAny.length > 0) {
+      return {
+        success: false,
+        message: 'A referral code has already been applied to this account',
+      };
+    }
+
+    const { data: existing } = await supabase
+      .from('referrals')
+      .select('id')
+      .eq('referred_uid', currentUserId)
+      .eq('referrer_uid', referrerId)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      return { success: false, message: 'This code has already been applied' };
+    }
+
+    const { data: circular } = await supabase
+      .from('referrals')
+      .select('id')
+      .eq('referrer_uid', currentUserId)
+      .eq('referred_uid', referrerId)
+      .limit(1);
+
+    if (circular && circular.length > 0) {
+      return {
+        success: false,
+        message: 'Circular referrals are not allowed. You already referred this person!',
+      };
+    }
+
+    await ensureSupabaseUserRecord(referrerData);
+    await ensureSupabaseUserRecord(currentUserData);
+    await setUserReferredBy(currentUserId, referrerId);
+
+    const recordId = await createReferralRecord(
+      referrerId,
+      currentUserId,
+      normalizedCode,
+      referrerData.name || 'User',
+      referrerData.email || '',
+      currentUserData.name || 'User',
+      currentUserData.email || ''
+    );
+
+    if (!recordId) {
+      return {
+        success: false,
+        message: 'Failed to apply referral code. Please try again.',
+      };
+    }
+
+    return {
+      success: true,
+      message: `You're now part of ${referrerData.name || 'their'} team!`,
+      referrerId,
+    };
+  } catch (error) {
+    console.error('Error applying referral code:', error);
+    return {
+      success: false,
+      message: 'Failed to apply referral code. Please try again.',
+    };
+  }
 }

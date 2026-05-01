@@ -1,10 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/admin-layout';
+import { AdminUploadsList } from '@/components/admin-uploads-list';
 import { useAdmin } from '@/components/providers/admin-provider';
 import { listenToDashboardStats, listenToOrders, updateOrderStatus, listenToPlans, updatePlan, updateSettings, listenToUsers } from '@/lib/admin-supabase-service';
+import { getAllUploads } from '@/lib/uploadImage';
+import {
+  ADMIN_APP_TASK_TITLE,
+  getAllAdminAppTaskSubmissions,
+  type AdminAppTaskSubmission,
+} from '@/lib/admin-app-task';
 import {
   ShoppingCart,
   Clock,
@@ -22,6 +29,9 @@ import {
   Edit,
   Check,
   X,
+  ImageIcon,
+  ListChecks,
+  ExternalLink,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -39,11 +49,20 @@ export default function AdminDashboard() {
     totalRevenue: 0,
     totalSales: 0,
     totalMembers: 0,
+    totalReferrals: 0,
+    purchasedReferrals: 0,
+    claimedReferralRewards: 0,
+    activeReferralLinks: 0,
+    activePlans: 0,
   });
   const [activeTab, setActiveTab] = useState('dashboard');
   const [orders, setOrders] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [uploads, setUploads] = useState<any[]>([]);
+  const [taskSubmissions, setTaskSubmissions] = useState<AdminAppTaskSubmission[]>([]);
+  const [loadingUploads, setLoadingUploads] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(false);
 
   // UI State
   const [editingPlan, setEditingPlan] = useState<any>(null);
@@ -63,6 +82,49 @@ export default function AdminDashboard() {
   const [editingApprovedOrder, setEditingApprovedOrder] = useState<string | null>(null);
   const [editingApprovedCredentials, setEditingApprovedCredentials] = useState<any>(null);
 
+  const referralUsers = useMemo(
+    () => users.filter((item) => item.totalReferrals > 0),
+    [users]
+  );
+  const approvedOrders = useMemo(
+    () =>
+      orders.filter(
+        (item) => item.status === 'approved' || item.status === 'completed'
+      ),
+    [orders]
+  );
+  const pendingOrRejectedOrders = useMemo(
+    () =>
+      orders.filter(
+        (item) => item.status === 'pending' || item.status === 'rejected'
+      ),
+    [orders]
+  );
+  const topReferringUsers = useMemo(
+    () =>
+      [...referralUsers]
+        .sort(
+          (first, second) =>
+            (second.totalReferrals || 0) - (first.totalReferrals || 0)
+        )
+        .slice(0, 5),
+    [referralUsers]
+  );
+  const taskStats = useMemo(
+    () => ({
+      total: taskSubmissions.length,
+      pending: taskSubmissions.filter((item) => item.approvalStatus === 'pending')
+        .length,
+      approved: taskSubmissions.filter(
+        (item) => item.approvalStatus === 'approved'
+      ).length,
+      rejected: taskSubmissions.filter(
+        (item) => item.approvalStatus === 'rejected'
+      ).length,
+    }),
+    [taskSubmissions]
+  );
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/admin/login');
@@ -70,32 +132,110 @@ export default function AdminDashboard() {
   }, [authLoading, user, router]);
 
   useEffect(() => {
+    if (!user) {
+      return;
+    }
+
     const unsubscribe = listenToDashboardStats((data) => {
       setStats(data);
     });
     return () => unsubscribe && unsubscribe();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
+    if (!user || !['orders', 'pending'].includes(activeTab)) {
+      return;
+    }
+
     const unsubOrders = listenToOrders((data) => {
       setOrders(data);
     });
     return () => unsubOrders && unsubOrders();
-  }, []);
+  }, [user, activeTab]);
 
   useEffect(() => {
+    if (!user || activeTab !== 'settings') {
+      return;
+    }
+
     const unsubPlans = listenToPlans((data) => {
       setPlans(data);
     });
     return () => unsubPlans && unsubPlans();
-  }, []);
+  }, [user, activeTab]);
 
   useEffect(() => {
+    if (!user || !['users', 'referrals', 'earn'].includes(activeTab)) {
+      return;
+    }
+
     const unsubUsers = listenToUsers((data) => {
       setUsers(data);
     });
     return () => unsubUsers && unsubUsers();
-  }, []);
+  }, [user, activeTab]);
+
+  useEffect(() => {
+    if (!user || !['dashboard', 'uploads'].includes(activeTab)) {
+      return;
+    }
+
+    let active = true;
+
+    const loadUploads = async () => {
+      try {
+        setLoadingUploads(true);
+        const data = await getAllUploads();
+
+        if (active) {
+          setUploads(data);
+        }
+      } catch (error) {
+        console.error('Error loading uploads for admin:', error);
+      } finally {
+        if (active) {
+          setLoadingUploads(false);
+        }
+      }
+    };
+
+    void loadUploads();
+
+    return () => {
+      active = false;
+    };
+  }, [user, activeTab]);
+
+  useEffect(() => {
+    if (!user || !['dashboard', 'tasks'].includes(activeTab)) {
+      return;
+    }
+
+    let active = true;
+
+    const loadTasks = async () => {
+      try {
+        setLoadingTasks(true);
+        const data = await getAllAdminAppTaskSubmissions();
+
+        if (active) {
+          setTaskSubmissions(data);
+        }
+      } catch (error) {
+        console.error('Error loading task submissions for admin:', error);
+      } finally {
+        if (active) {
+          setLoadingTasks(false);
+        }
+      }
+    };
+
+    void loadTasks();
+
+    return () => {
+      active = false;
+    };
+  }, [user, activeTab]);
 
   if (authLoading) {
     return <AdminLayout><div>Loading...</div></AdminLayout>;
@@ -138,7 +278,7 @@ export default function AdminDashboard() {
       setApproveModalOpen(false);
       setApproveOrderId(null);
       setApproveCredentials({ username: '', password: '', url: '', expiryDate: '' });
-      alert('✅ Order approved!');
+      alert('Order approved.');
     } catch (error) {
       console.error('Error:', error);
       alert('Error approving order');
@@ -176,7 +316,7 @@ export default function AdminDashboard() {
       setRejectModalOpen(false);
       setRejectOrderId(null);
       setRejectionReason('');
-      alert('✅ Order rejected!');
+      alert('Order rejected.');
     } catch (error) {
       console.error('Error:', error);
       alert('Error rejecting order');
@@ -237,7 +377,7 @@ export default function AdminDashboard() {
         } as any, order.userId);
         setEditingApprovedOrder(null);
         setEditingApprovedCredentials(null);
-        alert('✅ Credentials updated!');
+        alert('Credentials updated.');
       } catch (error) {
         console.error('Error:', error);
         alert('Error updating credentials');
@@ -261,7 +401,7 @@ export default function AdminDashboard() {
         });
         setEditingOrder(null);
         setEditingCredentials(null);
-        alert('✅ Credentials updated!');
+        alert('Credentials updated.');
       } catch (error) {
         console.error('Error:', error);
         alert('Error saving credentials');
@@ -276,7 +416,7 @@ export default function AdminDashboard() {
       setSavingPlan(true);
       await updatePlan(planId, updates);
       setEditingPlan(null);
-      alert('✅ Plan updated!');
+      alert('Plan updated.');
     } catch (error) {
       console.error('Error:', error);
       alert('Error saving plan');
@@ -290,7 +430,7 @@ export default function AdminDashboard() {
       await updateSettings({
         paymentInstructions: instructions,
       });
-      alert('✅ Payment instructions saved!');
+      alert('Payment instructions saved.');
     } catch (error) {
       console.error('Error:', error);
       alert('Error updating payment method');
@@ -310,7 +450,7 @@ export default function AdminDashboard() {
           telegram: socialMedia.telegram,
         },
       });
-      alert('✅ Social media links saved!');
+      alert('Social media links saved.');
     } catch (error) {
       console.error('Error:', error);
       alert('Error updating social media links');
@@ -350,14 +490,16 @@ export default function AdminDashboard() {
     <AdminLayout>
       <div className="space-y-6">
         {/* Tab Navigation */}
-        <div className="grid grid-cols-2 gap-2 mb-6 sm:grid-cols-3">
+        <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-9">
           {[
             { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
             { id: 'users', label: 'Users', icon: Users },
             { id: 'referrals', label: 'Referrals', icon: Share2 },
             { id: 'earn', label: 'Earn', icon: DollarSign },
+            { id: 'uploads', label: 'Uploads', icon: ImageIcon, badge: uploads.length },
+            { id: 'tasks', label: 'Tasks', icon: ListChecks, badge: taskStats.pending },
             { id: 'orders', label: 'Orders', icon: Package },
-            { id: 'pending', label: 'Pending', icon: AlertCircle, badge: orders.filter((o) => o.status === 'pending').length },
+            { id: 'pending', label: 'Pending', icon: AlertCircle, badge: stats.pendingOrders },
             { id: 'settings', label: 'Plans', icon: Settings },
           ].map(({ id, label, icon: Icon, badge }: any) => (
             <button
@@ -365,12 +507,12 @@ export default function AdminDashboard() {
               onClick={() => setActiveTab(id as any)}
               className={`flex flex-col items-center justify-center gap-1 py-3 px-2 rounded-xl transition-all text-xs sm:text-sm relative ${
                 activeTab === id
-                  ? 'bg-orange-600 text-white shadow-lg scale-105'
+                  ? 'bg-orange-600 text-white shadow-lg'
                   : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
               }`}
             >
               {badge && badge > 0 && (
-                <div className="absolute top-1 right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center animate-pulse">
+                <div className="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
                   {badge}
                 </div>
               )}
@@ -383,7 +525,7 @@ export default function AdminDashboard() {
         {/* Dashboard Tab */}
         {activeTab === 'dashboard' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <Card className="glass bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/30 dark:to-green-900/30">
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
@@ -393,6 +535,9 @@ export default function AdminDashboard() {
                     </div>
                     <DollarSign className="w-10 h-10 text-emerald-600 dark:text-emerald-400" />
                   </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    Approved order revenue from live payment records
+                  </p>
                 </CardContent>
               </Card>
 
@@ -405,6 +550,9 @@ export default function AdminDashboard() {
                     </div>
                     <UserCheck className="w-10 h-10 text-blue-600 dark:text-blue-400" />
                   </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    Total Firebase user profiles available to the app
+                  </p>
                 </CardContent>
               </Card>
 
@@ -417,6 +565,88 @@ export default function AdminDashboard() {
                     </div>
                     <ShoppingCart className="w-10 h-10 text-purple-600 dark:text-purple-400" />
                   </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    All customer orders across guest and logged-in checkout
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="glass bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/30 dark:to-orange-900/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm text-amber-600 dark:text-amber-400 font-semibold">Pending Orders</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{stats?.pendingOrders ?? 0}</p>
+                    </div>
+                    <Clock className="w-10 h-10 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    Orders waiting for admin review
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="glass bg-gradient-to-br from-cyan-50 to-sky-50 dark:from-cyan-900/30 dark:to-sky-900/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm text-cyan-600 dark:text-cyan-400 font-semibold">Purchased Referrals</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{stats?.purchasedReferrals ?? 0}</p>
+                    </div>
+                    <Share2 className="w-10 h-10 text-cyan-600 dark:text-cyan-400" />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    Referral purchases currently tracked in the database
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="glass bg-gradient-to-br from-rose-50 to-pink-50 dark:from-rose-900/30 dark:to-pink-900/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm text-rose-600 dark:text-rose-400 font-semibold">Active Plans</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{stats?.activePlans ?? 0}</p>
+                    </div>
+                    <Settings className="w-10 h-10 text-rose-600 dark:text-rose-400" />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    Plans currently enabled for checkout
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="glass bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-900/30 dark:to-violet-900/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm text-indigo-600 dark:text-indigo-400 font-semibold">Uploaded Images</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">
+                        {loadingUploads ? '...' : uploads.length}
+                      </p>
+                    </div>
+                    <ImageIcon className="w-10 h-10 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    Gallery images, payment proofs, and task proof files
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="glass bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-900/30 dark:to-cyan-900/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm text-teal-600 dark:text-teal-400 font-semibold">Pending Tasks</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">
+                        {loadingTasks ? '...' : taskStats.pending}
+                      </p>
+                    </div>
+                    <ListChecks className="w-10 h-10 text-teal-600 dark:text-teal-400" />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    Admin app task submissions waiting for review
+                  </p>
                 </CardContent>
               </Card>
             </div>
@@ -456,7 +686,7 @@ export default function AdminDashboard() {
         {/* Referrals Tab */}
         {activeTab === 'referrals' && (
           <div className="space-y-3">
-            {users.filter((u) => u.totalReferrals > 0).map((user) => (
+            {referralUsers.map((user) => (
               <Card key={user.id} className="glass border-l-4 border-l-blue-600">
                 <CardContent className="pt-4">
                   <p className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -472,7 +702,7 @@ export default function AdminDashboard() {
                 </CardContent>
               </Card>
             ))}
-            {users.filter((u) => u.totalReferrals > 0).length === 0 && (
+            {referralUsers.length === 0 && (
               <Card className="glass text-center py-8">
                 <CardContent>
                   <p className="text-slate-600 dark:text-slate-400">No active referrals yet</p>
@@ -486,16 +716,16 @@ export default function AdminDashboard() {
         {activeTab === 'earn' && (
           <div className="space-y-4">
             {/* Earnings Summary */}
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <Card className="glass bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/30 dark:to-emerald-900/30">
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-sm text-green-600 dark:text-green-400 font-semibold">Commission Rate</p>
-                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">10%</p>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">Per successful referral</p>
+                      <p className="text-sm text-green-600 dark:text-green-400 font-semibold">Total Referrals</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{stats?.totalReferrals ?? 0}</p>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">Tracked referral records across the app</p>
                     </div>
-                    <DollarSign className="w-10 h-10 text-green-600 dark:text-green-400" />
+                    <Share2 className="w-10 h-10 text-green-600 dark:text-green-400" />
                   </div>
                 </CardContent>
               </Card>
@@ -504,9 +734,9 @@ export default function AdminDashboard() {
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-sm text-blue-600 dark:text-blue-400 font-semibold">Total Earned</p>
-                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">$0.00</p>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">Admin commission total</p>
+                      <p className="text-sm text-blue-600 dark:text-blue-400 font-semibold">Claimed Referral Rewards</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">${Number(stats?.claimedReferralRewards ?? 0).toFixed(2)}</p>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">Sum of claimed reward amounts</p>
                     </div>
                     <TrendingUp className="w-10 h-10 text-blue-600 dark:text-blue-400" />
                   </div>
@@ -518,7 +748,7 @@ export default function AdminDashboard() {
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="text-sm text-purple-600 dark:text-purple-400 font-semibold">Active Referral Links</p>
-                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{users.length}</p>
+                      <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{stats?.activeReferralLinks ?? 0}</p>
                       <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">Users with referral codes</p>
                     </div>
                     <Share2 className="w-10 h-10 text-purple-600 dark:text-purple-400" />
@@ -535,28 +765,24 @@ export default function AdminDashboard() {
                   Top Referring Users
                 </h3>
                 <div className="space-y-3">
-                  {users
-                    .filter((u) => u.totalReferrals > 0)
-                    .sort((a, b) => (b.totalReferrals || 0) - (a.totalReferrals || 0))
-                    .slice(0, 5)
-                    .map((user, index) => (
-                      <div key={user.id} className="flex items-center justify-between p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold text-sm">
-                            {index + 1}
-                          </div>
-                          <div>
-                            <p className="font-semibold text-slate-900 dark:text-white text-sm">{user.name}</p>
-                            <p className="text-xs text-slate-600 dark:text-slate-400">{user.email}</p>
-                          </div>
+                  {topReferringUsers.map((user, index) => (
+                    <div key={user.id} className="flex items-center justify-between rounded-lg bg-slate-100 p-3 dark:bg-slate-800">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-500 text-sm font-bold text-white">
+                          {index + 1}
                         </div>
-                        <div className="text-right">
-                          <p className="font-bold text-slate-900 dark:text-white">{user.totalReferrals}</p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">referrals</p>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white">{user.name}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">{user.email}</p>
                         </div>
                       </div>
-                    ))}
-                  {users.filter((u) => u.totalReferrals > 0).length === 0 && (
+                      <div className="text-right">
+                        <p className="font-bold text-slate-900 dark:text-white">{user.totalReferrals}</p>
+                        <p className="text-xs text-slate-600 dark:text-slate-400">referrals</p>
+                      </div>
+                    </div>
+                  ))}
+                  {topReferringUsers.length === 0 && (
                     <p className="text-center text-slate-600 dark:text-slate-400 py-4">No referrals yet</p>
                   )}
                 </div>
@@ -590,10 +816,157 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* Uploads Tab */}
+        {activeTab === 'uploads' && (
+          <div className="space-y-4">
+            <Card className="glass border-l-4 border-l-indigo-600">
+              <CardContent className="pt-6">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                      Upload Center
+                    </h3>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      Payment proofs, task proofs, and gallery images uploaded by users.
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                    {loadingUploads ? 'Loading uploads...' : `${uploads.length} files found`}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <AdminUploadsList />
+          </div>
+        )}
+
+        {/* Tasks Tab */}
+        {activeTab === 'tasks' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+              <Card className="glass">
+                <CardContent className="pt-6">
+                  <p className="text-sm font-semibold text-slate-600 dark:text-slate-400">Total Tasks</p>
+                  <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+                    {loadingTasks ? '...' : taskStats.total}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="glass">
+                <CardContent className="pt-6">
+                  <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">Pending Review</p>
+                  <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+                    {loadingTasks ? '...' : taskStats.pending}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="glass">
+                <CardContent className="pt-6">
+                  <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">Approved</p>
+                  <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+                    {loadingTasks ? '...' : taskStats.approved}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="glass">
+                <CardContent className="pt-6">
+                  <p className="text-sm font-semibold text-red-600 dark:text-red-400">Rejected</p>
+                  <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+                    {loadingTasks ? '...' : taskStats.rejected}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card className="glass border-l-4 border-l-teal-600">
+              <CardContent className="pt-6">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                      {ADMIN_APP_TASK_TITLE}
+                    </h3>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      Review the latest task submissions here, or open the full task review page for approvals.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={() => router.push('/admin/social-tasks')}
+                    className="bg-teal-600 text-white hover:bg-teal-700"
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Open Full Review
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-3">
+              {taskSubmissions.slice(0, 8).map((submission) => (
+                <Card
+                  key={submission.id}
+                  className={`glass border-l-4 ${
+                    submission.approvalStatus === 'approved'
+                      ? 'border-l-emerald-600'
+                      : submission.approvalStatus === 'rejected'
+                      ? 'border-l-red-600'
+                      : 'border-l-amber-600'
+                  }`}
+                >
+                  <CardContent className="pt-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-slate-900 dark:text-white">
+                          {submission.userName}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-500">
+                          {submission.userEmail}
+                        </p>
+                      </div>
+                      <span className={`rounded px-2 py-1 text-xs font-bold ${getStatusColor(submission.approvalStatus)}`}>
+                        {submission.approvalStatus}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-xs md:grid-cols-2">
+                      <div className="rounded bg-slate-100 p-2 dark:bg-slate-800">
+                        <p className="text-slate-600 dark:text-slate-400">Account Email</p>
+                        <p className="mt-1 font-semibold text-slate-900 dark:text-white">
+                          {submission.details.accountEmail || 'Not provided'}
+                        </p>
+                      </div>
+                      <div className="rounded bg-slate-100 p-2 dark:bg-slate-800">
+                        <p className="text-slate-600 dark:text-slate-400">Submitted</p>
+                        <p className="mt-1 font-semibold text-slate-900 dark:text-white">
+                          {new Date(submission.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    {submission.adminNotes && (
+                      <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+                        {submission.adminNotes}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+
+              {!loadingTasks && taskSubmissions.length === 0 && (
+                <Card className="glass">
+                  <CardContent className="pt-8 text-center pb-8">
+                    <p className="text-slate-600 dark:text-slate-400">
+                      No task submissions yet.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Orders Tab */}
         {activeTab === 'orders' && (
           <div className="space-y-3">
-            {orders.filter((o) => o.status === 'approved' || o.status === 'completed').map((order) => (
+            {approvedOrders.map((order) => (
               <Card key={order.id} className="glass border-l-4 border-l-emerald-600">
                 <CardContent className="pt-4">
                   <div className="flex items-start justify-between mb-2">
@@ -718,7 +1091,7 @@ export default function AdminDashboard() {
         {/* Pending Orders Tab */}
         {activeTab === 'pending' && (
           <div className="space-y-3">
-            {orders.filter((o) => o.status === 'pending' || o.status === 'rejected').map((order) => (
+            {pendingOrRejectedOrders.map((order) => (
               <Card key={order.id} className={`glass border-l-4 ${order.status === 'pending' ? 'border-l-yellow-600' : 'border-l-red-600'}`}>
                 <CardContent className="pt-4">
                   <div className="flex items-start justify-between mb-3">
@@ -752,7 +1125,7 @@ export default function AdminDashboard() {
                   {order.paymentProof && (
                     <div className="mb-3">
                       <Button onClick={() => handleViewProof(order.paymentProof)} size="sm" className="w-full bg-blue-600 hover:bg-blue-700 text-white mb-2">
-                        📸 View Proof
+                        View Proof
                       </Button>
                     </div>
                   )}

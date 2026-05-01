@@ -1,103 +1,71 @@
 import {
   EmailAuthProvider,
-  browserLocalPersistence,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   reauthenticateWithCredential,
-  setPersistence,
   signInWithEmailAndPassword,
   signOut,
   updatePassword,
   updateProfile,
 } from 'firebase/auth';
-import { supabase } from '@/lib/supabase-config';
-import { isFirebaseConfigured } from './firebaseClient';
-import { assertFirebaseConfigured, auth } from './firebaseClient';
+import { auth, assertFirebaseConfigured } from './firebaseClient';
+import { ensureUserProfile } from './dbService';
 
-let persistencePromise = null;
-
-async function getAuthInstance() {
-  if (!isFirebaseConfigured) {
-    return null;
-  }
-
+export async function signUpWithEmailPassword({
+  name,
+  email,
+  password,
+}) {
   assertFirebaseConfigured();
 
-  if (!persistencePromise) {
-    persistencePromise = setPersistence(auth, browserLocalPersistence).catch(
-      (error) => {
-        persistencePromise = null;
-        throw error;
-      }
-    );
-  }
-
-  await persistencePromise;
-  return auth;
-}
-
-export async function signUpWithEmailPassword({ name, email, password }) {
-  if (!isFirebaseConfigured) {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: name },
-      },
-    });
-
-    if (error || !data.user) {
-      throw error || new Error('Signup failed');
-    }
-
-    return data.user;
-  }
-
-  const authInstance = await getAuthInstance();
-  const credential = await createUserWithEmailAndPassword(
-    authInstance,
-    email,
+  const { user } = await createUserWithEmailAndPassword(
+    auth,
+    email.trim(),
     password
   );
 
-  if (name) {
-    await updateProfile(credential.user, { displayName: name });
+  if (name?.trim()) {
+    await updateProfile(user, {
+      displayName: name.trim(),
+    });
   }
 
-  return credential.user;
+  // Create user profile in Firebase Realtime Database
+  if (user?.uid) {
+    await ensureUserProfile(user.uid, {
+      name: name?.trim() || 'User',
+      email: email.trim().toLowerCase(),
+    });
+  }
+
+  return auth.currentUser || user;
 }
 
 export async function signInWithEmailPassword({ email, password }) {
-  if (!isFirebaseConfigured) {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error || !data.user) {
-      throw error || new Error('Sign in failed');
-    }
-
-    return data.user;
-  }
-
-  const authInstance = await getAuthInstance();
-  const credential = await signInWithEmailAndPassword(
-    authInstance,
-    email,
+  assertFirebaseConfigured();
+  const { user } = await signInWithEmailAndPassword(
+    auth,
+    email.trim(),
     password
   );
-  return credential.user;
+
+  // Ensure user profile exists in Firebase
+  if (user?.uid) {
+    await ensureUserProfile(user.uid, {
+      name: user.displayName || 'User',
+      email: email.trim().toLowerCase(),
+    });
+  }
+
+  return user;
 }
 
 export async function signOutUser() {
-  if (!isFirebaseConfigured) {
-    await supabase.auth.signOut();
+  if (!auth) {
     return;
   }
 
-  const authInstance = await getAuthInstance();
-  await signOut(authInstance);
+  await signOut(auth);
 }
 
 export async function changeCurrentUserPassword({
@@ -105,46 +73,30 @@ export async function changeCurrentUserPassword({
   currentPassword,
   newPassword,
 }) {
-  if (!isFirebaseConfigured) {
-    const { error: reauthError } = await supabase.auth.signInWithPassword({
-      email,
-      password: currentPassword,
-    });
+  assertFirebaseConfigured();
 
-    if (reauthError) {
-      throw reauthError;
-    }
-
-    const { error: updateError } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
-
-    if (updateError) {
-      throw updateError;
-    }
-
-    return;
+  if (!auth.currentUser) {
+    throw new Error('No authenticated user found.');
   }
 
-  const authInstance = await getAuthInstance();
-  const currentUser = authInstance.currentUser;
+  const credential = EmailAuthProvider.credential(
+    email.trim(),
+    currentPassword
+  );
 
-  if (!currentUser || !email) {
-    throw new Error('No authenticated user found');
-  }
-
-  const credential = EmailAuthProvider.credential(email, currentPassword);
-  await reauthenticateWithCredential(currentUser, credential);
-  await updatePassword(currentUser, newPassword);
+  await reauthenticateWithCredential(auth.currentUser, credential);
+  await updatePassword(auth.currentUser, newPassword);
 }
 
 export function subscribeToAuthChanges(callback) {
-  if (!isFirebaseConfigured || !auth) {
+  if (!auth) {
     callback(null);
     return () => {};
   }
 
-  return onAuthStateChanged(auth, callback);
+  return onAuthStateChanged(auth, (user) => {
+    callback(user || null);
+  });
 }
 
 export function getCurrentAuthUser() {
@@ -155,22 +107,48 @@ export function getAuthErrorMessage(
   error,
   fallbackMessage = 'Authentication failed.'
 ) {
-  if (!error?.code) return error?.message || fallbackMessage;
+  const message = error?.message || '';
+  const code = error?.code || error?.name || '';
 
-  switch (error.code) {
-    case 'auth/email-already-in-use':
-      return 'Email already registered. Try logging in.';
-    case 'auth/invalid-email':
-      return 'Please enter a valid email address.';
-    case 'auth/weak-password':
-      return 'Password should be at least 6 characters.';
-    case 'auth/invalid-credential':
-      return 'Invalid email or password.';
-    case 'auth/user-disabled':
-      return 'This account has been disabled.';
-    case 'auth/too-many-requests':
-      return 'Too many attempts. Please try again later.';
-    default:
-      return error.message || fallbackMessage;
+  if (code === 'auth/email-already-in-use') {
+    return 'Email already registered. Try logging in.';
   }
+
+  if (code === 'auth/invalid-email') {
+    return 'Please enter a valid email address.';
+  }
+
+  if (code === 'auth/operation-not-allowed') {
+    return 'Email/password sign-in is not enabled in Firebase yet.';
+  }
+
+  if (code === 'auth/weak-password') {
+    return 'Password must include 8+ characters, uppercase, lowercase, number, and symbol.';
+  }
+
+  if (
+    code === 'auth/invalid-credential' ||
+    code === 'auth/invalid-login-credentials' ||
+    code === 'auth/wrong-password' ||
+    message.toLowerCase().includes('invalid credential')
+  ) {
+    return 'Invalid credentials';
+  }
+
+  if (code === 'auth/user-not-found') {
+    return 'User not found';
+  }
+
+  if (code === 'auth/user-disabled') {
+    return 'This account has been disabled.';
+  }
+
+  if (
+    code === 'auth/too-many-requests' ||
+    message.toLowerCase().includes('too many requests')
+  ) {
+    return 'Too many attempts. Please try again later.';
+  }
+
+  return message || fallbackMessage;
 }
