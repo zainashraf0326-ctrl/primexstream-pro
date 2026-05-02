@@ -31,6 +31,38 @@ export async function uploadProofImage(userId, file, options = {}) {
   const relativePath = `${userId}/${orderFolder}${Date.now()}-${sanitizeFileName(file.name)}`;
   const filePath = `${targetBucket}/${relativePath}`;
 
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabaseStorageClient.storage
+      .from(targetBucket)
+      .upload(relativePath, file, {
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (!error) {
+      const { data: publicUrlData } = supabaseStorageClient.storage
+        .from(targetBucket)
+        .getPublicUrl(data?.path || relativePath);
+
+      return {
+        bucket: targetBucket,
+        path: data?.path || relativePath,
+        url: publicUrlData?.publicUrl || '',
+      };
+    }
+
+    if (error.message?.toLowerCase().includes('bucket')) {
+      throw new Error(
+        `Supabase bucket "${targetBucket}" was not found. Create the "${targetBucket}" bucket before uploading.`
+      );
+    }
+
+    console.warn(
+      'Supabase proof upload failed, falling back to Firebase storage:',
+      error
+    );
+  }
+
   if (isFirebaseConfigured && firebaseStorage) {
     try {
       const uploadSnapshot = await uploadBytes(
@@ -91,32 +123,7 @@ export async function uploadProofImage(userId, file, options = {}) {
     );
   }
 
-  const { data, error } = await supabaseStorageClient.storage
-    .from(targetBucket)
-    .upload(relativePath, file, {
-      cacheControl: '3600',
-      upsert: false,
-    });
-
-  if (error) {
-    if (error.message?.toLowerCase().includes('bucket')) {
-      throw new Error(
-        `Supabase bucket "${targetBucket}" was not found. Create the "${targetBucket}" bucket before uploading.`
-      );
-    }
-
-    throw new Error(error.message || 'Proof image upload failed.');
-  }
-
-  const { data: publicUrlData } = supabaseStorageClient.storage
-    .from(targetBucket)
-    .getPublicUrl(filePath);
-
-  return {
-    bucket: targetBucket,
-    path: data?.path || relativePath,
-    url: publicUrlData?.publicUrl || '',
-  };
+  throw new Error('Proof image upload failed.');
 }
 
 export function uploadTaskProofImage(userId, file, options = {}) {

@@ -67,6 +67,10 @@ const config: Config = {
         "fade-in-up": "fadeInUp 0.5s ease-in-out",
         "slide-up": "slideUp 0.5s ease-in-out",
         "pulse-soft": "pulseSoft 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "smooth-scale": "smoothScale 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "smooth-fade": "smoothFade 0.4s ease-out",
+        "apple-slide": "appleSlide 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+        "apple-bounce": "appleBounce 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55)",
       },
       keyframes: {
         fadeIn: {
@@ -84,6 +88,22 @@ const config: Config = {
         pulseSoft: {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.5" },
+        },
+        smoothScale: {
+          "0%": { transform: "scale(0.95)", opacity: "0" },
+          "100%": { transform: "scale(1)", opacity: "1" },
+        },
+        smoothFade: {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        appleSlide: {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        appleBounce: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-4px)" },
         },
       },
     },

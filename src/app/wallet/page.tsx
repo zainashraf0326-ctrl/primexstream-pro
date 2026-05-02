@@ -153,7 +153,7 @@ export default function WalletPage() {
         .from('referrals')
         .select('*')
         .eq('referrer_uid', user.id)
-        .order('joined_at', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (error || !active) return;
 
@@ -163,7 +163,7 @@ export default function WalletPage() {
         status: row.purchased_plan || row.status === 'purchased' || row.status === 'claimed' ? 'purchased' : 'signed_up',
         rewardGiven: Boolean(row.reward_claimed),
         rewardAmount: Number(row.reward_amount || 5),
-        createdAt: row.joined_at,
+        createdAt: row.created_at || row.joined_at,
         referralName: row.referred_name || 'User',
         referralEmail: row.referred_email || 'Email not available',
         lastReminderSent: row.last_reminder_sent,

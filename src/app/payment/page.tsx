@@ -67,6 +67,9 @@ function formatPaymentMethodLabel(method: PaymentMethod | null) {
   return labels[method];
 }
 
+const PENDING_ORDER_ID_KEY = 'primex_pending_order_id';
+const PENDING_ORDER_RECEIPT_KEY = 'primex_pending_order_receipt';
+
 type ReceiptData = {
   orderId: string;
   transactionId: string;
@@ -336,6 +339,22 @@ function PaymentContent() {
       }
 
       const order = await createOrder(userId, orderData);
+      if (typeof window !== 'undefined' && order?.id) {
+        window.localStorage.setItem(PENDING_ORDER_ID_KEY, order.id);
+        window.localStorage.setItem(
+          PENDING_ORDER_RECEIPT_KEY,
+          JSON.stringify({
+            orderId: order.id,
+            transactionId: txId,
+            customerName: userName,
+            customerEmail: userEmail,
+            planName: orderData.planName,
+            paymentMethod: formatPaymentMethodLabel(method),
+            amount: finalPrice,
+            createdAt: order.createdAt || new Date().toISOString(),
+          })
+        );
+      }
       setReceipt({
         orderId: order.id || `ORD${Date.now()}`,
         transactionId: txId,
@@ -381,15 +400,15 @@ function PaymentContent() {
       />
       <DiscountModal isOpen={showDiscountModal} onContinue={() => setShowDiscountModal(false)} />
       <div className="w-full">
-        <div className="max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16 space-y-6">
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 lg:py-16 space-y-4 sm:space-y-6">
           {!success && (
-            <div className="flex items-center justify-between rounded-lg bg-slate-100 dark:bg-slate-800 px-4 py-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg bg-slate-100 dark:bg-slate-800 px-3 sm:px-4 py-2 sm:py-3">
               {[1, 2].map((step) => (
                 <div key={step} className="flex items-center gap-2">
-                  <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold ${step <= currentStep ? 'bg-emerald-500 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                  <div className={`h-7 sm:h-8 w-7 sm:w-8 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm ${step <= currentStep ? 'bg-emerald-500 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
                     {step}
                   </div>
-                  <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                  <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">
                     {step === 1 ? 'Payment Method' : 'Verification'}
                   </span>
                 </div>
@@ -399,16 +418,16 @@ function PaymentContent() {
 
           {success && receipt ? (
             <Card className="mx-auto max-w-3xl glass overflow-hidden border-emerald-200 dark:border-emerald-700/30 shadow-[0_24px_80px_-36px_rgba(16,185,129,0.45)]">
-              <CardContent className="space-y-6 p-5 md:p-7">
-                <div className="flex items-start justify-between gap-4">
+              <CardContent className="space-y-4 sm:space-y-6 p-4 sm:p-5 md:p-7">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
                   <div className="space-y-2">
-                    <div className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                      <CheckCircle2 className="h-4 w-4" />
+                    <div className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-2 sm:px-3 py-0.5 sm:py-1 text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                      <CheckCircle2 className="h-3 sm:h-4 w-3 sm:w-4" />
                       Payment Submitted
                     </div>
                     <div>
-                      <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Payment Receipt</h3>
-                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                      <h3 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">Payment Receipt</h3>
+                      <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
                         Your order is saved and waiting for admin approval.
                       </p>
                     </div>
@@ -419,47 +438,47 @@ function PaymentContent() {
                     variant="outline"
                     size="sm"
                     onClick={() => router.push(successRedirectPath)}
-                    className="gap-2 rounded-full"
+                    className="gap-2 rounded-full w-full sm:w-auto"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-3 sm:h-4 w-3 sm:w-4" />
                     Close
                   </Button>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Customer Name</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{receipt.customerName}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                  <div className="rounded-lg sm:rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Customer Name</p>
+                    <p className="mt-1 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">{receipt.customerName}</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Customer Email</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white break-all">{receipt.customerEmail}</p>
+                  <div className="rounded-lg sm:rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Customer Email</p>
+                    <p className="mt-1 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white break-all">{receipt.customerEmail}</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Plan Name</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{receipt.planName}</p>
+                  <div className="rounded-lg sm:rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Plan Name</p>
+                    <p className="mt-1 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">{receipt.planName}</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Payment Method</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{receipt.paymentMethod}</p>
+                  <div className="rounded-lg sm:rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Payment Method</p>
+                    <p className="mt-1 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">{receipt.paymentMethod}</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/50">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Date & Time</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
+                  <div className="rounded-lg sm:rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Date & Time</p>
+                    <p className="mt-1 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">
                       {new Intl.DateTimeFormat('en-US', {
                         dateStyle: 'medium',
                         timeStyle: 'short',
                       }).format(new Date(receipt.createdAt))}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 dark:border-emerald-800 dark:bg-emerald-900/20">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Total Paid</p>
-                    <p className="mt-2 text-lg font-bold text-emerald-700 dark:text-emerald-300">${receipt.amount.toFixed(2)}</p>
+                  <div className="rounded-lg sm:rounded-2xl border border-emerald-200 bg-emerald-50/80 p-3 sm:p-4 dark:border-emerald-800 dark:bg-emerald-900/20">
+                    <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Total Paid</p>
+                    <p className="mt-1 sm:mt-2 text-base sm:text-lg font-bold text-emerald-700 dark:text-emerald-300">${receipt.amount.toFixed(2)}</p>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-950/40">
-                  <div className="flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="rounded-lg sm:rounded-2xl border border-dashed border-slate-300 bg-white/70 p-3 sm:p-4 dark:border-slate-700 dark:bg-slate-950/40">
+                  <div className="flex flex-col gap-2 sm:gap-3 text-xs sm:text-sm">
                     <div>
                       <p className="font-semibold text-slate-900 dark:text-white">Order ID: {receipt.orderId}</p>
                       <p className="mt-1 text-slate-600 dark:text-slate-400 break-all">
@@ -474,22 +493,22 @@ function PaymentContent() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
                   <Button
                     type="button"
                     onClick={handleShareReceipt}
                     variant="outline"
-                    className="gap-2 rounded-2xl"
+                    className="gap-2 rounded-lg sm:rounded-2xl text-xs sm:text-sm"
                   >
-                    <Share2 className="h-4 w-4" />
+                    <Share2 className="h-3 sm:h-4 w-3 sm:w-4" />
                     Share Receipt
                   </Button>
                   <Button
                     type="button"
                     onClick={handleDownloadReceipt}
-                    className="gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700"
+                    className="gap-2 rounded-lg sm:rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-xs sm:text-sm"
                   >
-                    <Download className="h-4 w-4" />
+                    <Download className="h-3 sm:h-4 w-3 sm:w-4" />
                     Download Receipt
                   </Button>
                 </div>
@@ -544,7 +563,7 @@ function PaymentContent() {
                       Loading live payment instructions... You can continue with payment method selection.
                     </div>
                   )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 md:gap-4">
                     {paymentMethods.map((pm) => {
                       const Icon = pm.icon;
                       const selected = method === pm.id;
@@ -552,7 +571,7 @@ function PaymentContent() {
                         <button
                           key={pm.id}
                           onClick={() => setMethod(pm.id)}
-                          className={`relative rounded-2xl p-5 text-left transition-all border ${
+                          className={`relative rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-5 text-left transition-all border text-xs sm:text-sm ${
                             selected
                               ? 'border-emerald-500 bg-white dark:bg-slate-900 shadow-xl'
                               : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:shadow-md'
@@ -563,25 +582,25 @@ function PaymentContent() {
                           }`}
                         >
                           {pm.isDiscounted && (
-                            <span className="absolute -top-2 -right-2 rounded-full bg-red-500 text-white text-[10px] font-bold px-2 py-1">
+                            <span className="absolute -top-1.5 -right-1.5 rounded-full bg-red-500 text-white text-[8px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 sm:py-1">
                               SAVE 30%
                             </span>
                           )}
-                          <Icon className="h-8 w-8 text-slate-800 dark:text-slate-100" />
-                          <p className="mt-3 font-bold text-slate-900 dark:text-white">{pm.name}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">{pm.subtitle}</p>
+                          <Icon className="h-6 sm:h-7 md:h-8 w-6 sm:w-7 md:w-8 text-slate-800 dark:text-slate-100" />
+                          <p className="mt-2 sm:mt-3 font-bold text-slate-900 dark:text-white text-xs sm:text-sm">{pm.name}</p>
+                          <p className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400">{pm.subtitle}</p>
                           {pm.isDiscounted && (
-                            <p className="mt-3 text-xs font-semibold text-red-600 dark:text-red-400">Recommended Lowest Cost</p>
+                            <p className="mt-2 sm:mt-3 text-[9px] sm:text-xs font-semibold text-red-600 dark:text-red-400">Recommended</p>
                           )}
                         </button>
                       );
                     })}
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
                     {trustBadges.map((badge) => (
-                      <div key={badge.title} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-center">
-                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">{badge.title}</p>
+                      <div key={badge.title} className="rounded-lg sm:rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 sm:p-3 text-center">
+                        <p className="text-[11px] sm:text-xs font-semibold text-slate-700 dark:text-slate-300">{badge.title}</p>
                       </div>
                     ))}
                   </div>
@@ -596,15 +615,15 @@ function PaymentContent() {
 
                   {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                     {!isLoggedIn && (
-                      <Button type="button" variant="outline" onClick={() => setCurrentStep(0)} className="flex-1">
+                      <Button type="button" variant="outline" onClick={() => setCurrentStep(0)} className="flex-1 text-xs sm:text-sm">
                         Back to Guest Info
                       </Button>
                     )}
                     <Button
                       onClick={() => (method ? setCurrentStep(2) : setError('Please select a payment method.'))}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-xs sm:text-sm"
                       disabled={!method}
                     >
                       Continue to Verification
@@ -614,52 +633,52 @@ function PaymentContent() {
               )}
 
               {currentStep === 2 && (
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  <Button type="button" variant="outline" onClick={() => setCurrentStep(1)}>
+                <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
+                  <Button type="button" variant="outline" onClick={() => setCurrentStep(1)} className="text-xs sm:text-sm">
                     Back to Payment Method
                   </Button>
                   <Card className="glass">
-                    <CardTitle className="mb-3">Upload Payment Proof</CardTitle>
-                    <CardContent className="space-y-4">
+                    <CardTitle className="mb-2 sm:mb-3 text-base sm:text-lg">Upload Payment Proof</CardTitle>
+                    <CardContent className="space-y-3 sm:space-y-4">
                       <input
                         type="file"
                         accept="image/*"
                         aria-label="Upload payment proof"
                         onChange={(e) => setScreenshot(e.target.files?.[0] || null)}
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 p-3"
+                        className="w-full rounded-lg sm:rounded-xl border border-slate-300 dark:border-slate-600 p-2 sm:p-3 text-xs sm:text-sm"
                       />
                       <input
                         type="text"
                         placeholder="Transaction ID"
                         value={txId}
                         onChange={(e) => setTxId(e.target.value)}
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 p-3 bg-white dark:bg-slate-800"
+                        className="w-full rounded-lg sm:rounded-xl border border-slate-300 dark:border-slate-600 p-2 sm:p-3 bg-white dark:bg-slate-800 text-xs sm:text-sm"
                       />
                     </CardContent>
                   </Card>
 
                   <Card className="glass border-emerald-200 dark:border-emerald-700/30">
-                    <CardTitle className="mb-3">Plan Summary</CardTitle>
+                    <CardTitle className="mb-2 sm:mb-3 text-base sm:text-lg">Plan Summary</CardTitle>
                     <CardContent className="space-y-2">
-                      <p className="text-slate-700 dark:text-slate-300">{plan?.name || 'IPTV Plan'}</p>
-                      <p className="text-slate-700 dark:text-slate-300">Original: ${originalPrice.toFixed(2)}</p>
-                      <p className="text-slate-700 dark:text-slate-300">Sale: ${salePrice.toFixed(2)}</p>
-                      {isSpecialPayment && <p className="text-red-600 dark:text-red-400">Discount: -${extraDiscount.toFixed(2)}</p>}
-                      <p className="font-bold text-emerald-600">Total: ${finalPrice.toFixed(2)}</p>
+                      <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300">{plan?.name || 'IPTV Plan'}</p>
+                      <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300">Original: ${originalPrice.toFixed(2)}</p>
+                      <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300">Sale: ${salePrice.toFixed(2)}</p>
+                      {isSpecialPayment && <p className="text-xs sm:text-sm text-red-600 dark:text-red-400">Discount: -${extraDiscount.toFixed(2)}</p>}
+                      <p className="font-bold text-sm sm:text-base text-emerald-600">Total: ${finalPrice.toFixed(2)}</p>
                     </CardContent>
                   </Card>
 
-                  {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+                  {error && <div className="rounded-lg border border-red-200 bg-red-50 p-2 sm:p-3 text-xs sm:text-sm text-red-700">{error}</div>}
 
-                  <Button type="submit" disabled={!screenshot || !txId || loading} className="w-full bg-emerald-600 hover:bg-emerald-700">
+                  <Button type="submit" disabled={!screenshot || !txId || loading} className="w-full bg-emerald-600 hover:bg-emerald-700 text-xs sm:text-sm">
                     {loading ? (
                       <>
-                        <Loader className="h-4 w-4 mr-2 animate-spin" />
+                        <Loader className="h-3 sm:h-4 w-3 sm:w-4 mr-2 animate-spin" />
                         Processing...
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 className="h-4 w-4 mr-2" />
+                        <CheckCircle2 className="h-3 sm:h-4 w-3 sm:w-4 mr-2" />
                         Confirm Payment (${finalPrice.toFixed(2)})
                       </>
                     )}

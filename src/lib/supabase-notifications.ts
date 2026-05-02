@@ -7,7 +7,18 @@ import { supabase } from '@/lib/supabase-config';
 export interface NotificationData {
   id: string;
   userId: string;
-  type: 'order' | 'referral' | 'admin' | 'success' | 'reject' | 'reminder' | 'order_created' | 'order_accepted' | 'order_rejected';
+  type:
+    | 'order'
+    | 'referral'
+    | 'admin'
+    | 'success'
+    | 'reject'
+    | 'reminder'
+    | 'payment'
+    | 'general'
+    | 'order_created'
+    | 'order_accepted'
+    | 'order_rejected';
   title: string;
   message: string;
   link?: string;
@@ -20,6 +31,7 @@ export interface NotificationData {
     orderPlan?: string;
     referrerId?: string;
     referredName?: string;
+    referredUserId?: string;
     rejectionReason?: string;
   };
 }
@@ -98,7 +110,7 @@ export async function notifyOrderCreated(
 ): Promise<void> {
   await createNotification(
     userId,
-    'order',
+    'order_created',
     'Order Created',
     `Your order for ${orderData.planName} (${orderData.amount}) has been created. Awaiting admin approval.`,
     {
@@ -145,7 +157,7 @@ export async function notifyOrderApproved(
 
   await createNotification(
     userId,
-    'success',
+    'order_accepted',
     'Order Approved!',
     `Your order for ${orderData.planName} has been approved and is ready to use.${credText}`,
     {
@@ -165,7 +177,7 @@ export async function notifyOrderRejected(
 ): Promise<void> {
   await createNotification(
     userId,
-    'reject',
+    'order_rejected',
     'Order Rejected',
     `Your order has been rejected.\n\nReason: ${orderData.reason}`,
     {
@@ -194,7 +206,7 @@ export async function notifyReferralPurchased(
 ): Promise<void> {
   await createNotification(
     referrerUid,
-    'success',
+    'referral',
     'Reward Earned',
     `${referredName} made a purchase. You earned ${rewardAmount} commission.`,
     { referredName },

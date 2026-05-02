@@ -15,7 +15,7 @@ const navItems = [
 export function BottomNavigation() {
   const pathname = usePathname();
 
-  // Hide bottom nav on public pages, auth pages, and admin pages
+  // Hide bottom nav only on public/auth/admin routes so app pages never feel stranded.
   if (pathname === '/' || pathname === '/login' || pathname.startsWith('/admin')) {
     return null;
   }

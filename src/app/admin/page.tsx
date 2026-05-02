@@ -56,6 +56,7 @@ export default function AdminDashboard() {
     activePlans: 0,
   });
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [orderFilter, setOrderFilter] = useState<'all' | 'sales' | 'approved' | 'pending' | 'rejected'>('all');
   const [orders, setOrders] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -86,19 +87,54 @@ export default function AdminDashboard() {
     () => users.filter((item) => item.totalReferrals > 0),
     [users]
   );
-  const approvedOrders = useMemo(
+  const sortedOrders = useMemo(
     () =>
-      orders.filter(
-        (item) => item.status === 'approved' || item.status === 'completed'
+      [...orders].sort(
+        (first, second) =>
+          new Date(second.createdAt || 0).getTime() -
+          new Date(first.createdAt || 0).getTime()
       ),
     [orders]
   );
+  const approvedOrders = useMemo(
+    () =>
+      sortedOrders.filter(
+        (item) =>
+          item.status === 'approved' ||
+          item.status === 'completed' ||
+          item.status === 'active'
+      ),
+    [sortedOrders]
+  );
   const pendingOrRejectedOrders = useMemo(
     () =>
-      orders.filter(
+      sortedOrders.filter(
         (item) => item.status === 'pending' || item.status === 'rejected'
       ),
-    [orders]
+    [sortedOrders]
+  );
+  const filteredOrders = useMemo(() => {
+    switch (orderFilter) {
+      case 'sales':
+      case 'approved':
+        return sortedOrders.filter((item) =>
+          ['approved', 'completed', 'active'].includes(item.status)
+        );
+      case 'pending':
+        return sortedOrders.filter((item) => item.status === 'pending');
+      case 'rejected':
+        return sortedOrders.filter((item) => item.status === 'rejected');
+      default:
+        return sortedOrders;
+    }
+  }, [orderFilter, sortedOrders]);
+  const filteredOrderSales = useMemo(
+    () =>
+      filteredOrders.reduce(
+        (sum, item) => sum + Number(item.finalPrice || item.amount || 0),
+        0
+      ),
+    [filteredOrders]
   );
   const topReferringUsers = useMemo(
     () =>
@@ -457,6 +493,26 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleTabChange = (tabId: string) => {
+    setActiveTab(tabId);
+
+    if (tabId === 'orders') {
+      setOrderFilter('all');
+    }
+
+    if (tabId === 'pending') {
+      setOrderFilter('pending');
+    }
+  };
+
+  const openOrderView = (
+    tabId: 'orders' | 'pending',
+    filter: 'all' | 'sales' | 'approved' | 'pending' | 'rejected'
+  ) => {
+    setOrderFilter(filter);
+    setActiveTab(tabId);
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending':
@@ -486,6 +542,20 @@ export default function AdminDashboard() {
     </div>
   );
 
+  const DashboardTile = ({ className, onClick, children }: any) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full text-left"
+    >
+      <Card
+        className={`${className} transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500`}
+      >
+        {children}
+      </Card>
+    </button>
+  );
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -504,7 +574,7 @@ export default function AdminDashboard() {
           ].map(({ id, label, icon: Icon, badge }: any) => (
             <button
               key={id}
-              onClick={() => setActiveTab(id as any)}
+              onClick={() => handleTabChange(id as any)}
               className={`flex flex-col items-center justify-center gap-1 py-3 px-2 rounded-xl transition-all text-xs sm:text-sm relative ${
                 activeTab === id
                   ? 'bg-orange-600 text-white shadow-lg'
@@ -526,7 +596,10 @@ export default function AdminDashboard() {
         {activeTab === 'dashboard' && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Card className="glass bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/30 dark:to-green-900/30">
+              <DashboardTile
+                onClick={() => openOrderView('orders', 'sales')}
+                className="glass bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/30 dark:to-green-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -539,9 +612,12 @@ export default function AdminDashboard() {
                     Approved order revenue from live payment records
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
 
-              <Card className="glass bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/30 dark:to-cyan-900/30">
+              <DashboardTile
+                onClick={() => handleTabChange('users')}
+                className="glass bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/30 dark:to-cyan-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -554,9 +630,12 @@ export default function AdminDashboard() {
                     Total Firebase user profiles available to the app
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
 
-              <Card className="glass bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/30 dark:to-pink-900/30">
+              <DashboardTile
+                onClick={() => openOrderView('orders', 'all')}
+                className="glass bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/30 dark:to-pink-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -569,9 +648,12 @@ export default function AdminDashboard() {
                     All customer orders across guest and logged-in checkout
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
 
-              <Card className="glass bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/30 dark:to-orange-900/30">
+              <DashboardTile
+                onClick={() => openOrderView('pending', 'pending')}
+                className="glass bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/30 dark:to-orange-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -584,9 +666,12 @@ export default function AdminDashboard() {
                     Orders waiting for admin review
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
 
-              <Card className="glass bg-gradient-to-br from-cyan-50 to-sky-50 dark:from-cyan-900/30 dark:to-sky-900/30">
+              <DashboardTile
+                onClick={() => handleTabChange('referrals')}
+                className="glass bg-gradient-to-br from-cyan-50 to-sky-50 dark:from-cyan-900/30 dark:to-sky-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -599,9 +684,12 @@ export default function AdminDashboard() {
                     Referral purchases currently tracked in the database
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
 
-              <Card className="glass bg-gradient-to-br from-rose-50 to-pink-50 dark:from-rose-900/30 dark:to-pink-900/30">
+              <DashboardTile
+                onClick={() => handleTabChange('settings')}
+                className="glass bg-gradient-to-br from-rose-50 to-pink-50 dark:from-rose-900/30 dark:to-pink-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -614,9 +702,12 @@ export default function AdminDashboard() {
                     Plans currently enabled for checkout
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
 
-              <Card className="glass bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-900/30 dark:to-violet-900/30">
+              <DashboardTile
+                onClick={() => handleTabChange('uploads')}
+                className="glass bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-900/30 dark:to-violet-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -631,9 +722,12 @@ export default function AdminDashboard() {
                     Gallery images, payment proofs, and task proof files
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
 
-              <Card className="glass bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-900/30 dark:to-cyan-900/30">
+              <DashboardTile
+                onClick={() => handleTabChange('tasks')}
+                className="glass bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-900/30 dark:to-cyan-900/30"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div>
@@ -648,7 +742,7 @@ export default function AdminDashboard() {
                     Admin app task submissions waiting for review
                   </p>
                 </CardContent>
-              </Card>
+              </DashboardTile>
             </div>
           </div>
         )}
@@ -965,27 +1059,84 @@ export default function AdminDashboard() {
 
         {/* Orders Tab */}
         {activeTab === 'orders' && (
-          <div className="space-y-3">
-            {approvedOrders.map((order) => (
-              <Card key={order.id} className="glass border-l-4 border-l-emerald-600">
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'all', label: 'All Orders' },
+                { id: 'sales', label: 'Sales Orders' },
+                { id: 'pending', label: 'Pending' },
+                { id: 'rejected', label: 'Rejected' },
+              ].map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  onClick={() => setOrderFilter(filter.id as any)}
+                  className={`rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
+                    orderFilter === filter.id
+                      ? 'bg-orange-600 text-white'
+                      : 'bg-white text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <Card className="glass border-l-4 border-l-orange-600">
+              <CardContent className="pt-4">
+                <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+                  <div>
+                    <p className="text-slate-600 dark:text-slate-400">Visible Orders</p>
+                    <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">
+                      {filteredOrders.length}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-600 dark:text-slate-400">Visible Sales</p>
+                    <p className="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                      ${filteredOrderSales.toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-600 dark:text-slate-400">Current Filter</p>
+                    <p className="mt-1 text-sm font-semibold capitalize text-slate-900 dark:text-white">
+                      {orderFilter === 'sales' ? 'Approved revenue orders' : orderFilter}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {filteredOrders.map((order) => (
+              <Card
+                key={order.id}
+                className={`glass border-l-4 ${
+                  order.status === 'pending'
+                    ? 'border-l-yellow-600'
+                    : order.status === 'rejected'
+                    ? 'border-l-red-600'
+                    : 'border-l-emerald-600'
+                }`}
+              >
                 <CardContent className="pt-4">
-                  <div className="flex items-start justify-between mb-2">
+                  <div className="mb-2 flex items-start justify-between">
                     <div>
                       <p className="font-bold text-slate-900 dark:text-white">{order.plan}</p>
                       <p className="text-xs text-slate-500 dark:text-slate-500">ID: {order.id}</p>
                     </div>
-                    <span className={`text-xs font-bold px-2 py-1 rounded ${getStatusColor(order.status)}`}>
+                    <span className={`rounded px-2 py-1 text-xs font-bold ${getStatusColor(order.status)}`}>
                       {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                     </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs mt-3">
+
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                     <div>
                       <p className="text-slate-600 dark:text-slate-400">Price</p>
                       <p className="font-bold text-slate-900 dark:text-white">${order.finalPrice || 0}</p>
                     </div>
                     <div>
                       <p className="text-slate-600 dark:text-slate-400">User</p>
-                      <p className="font-bold text-slate-900 dark:text-white truncate text-xs">{order.userId}</p>
+                      <p className="truncate text-xs font-bold text-slate-900 dark:text-white">{order.userId}</p>
                     </div>
                     <div>
                       <p className="text-slate-600 dark:text-slate-400">Method</p>
@@ -993,89 +1144,119 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Credentials Section */}
+                  {order.rejectReason && (
+                    <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-300">
+                      {order.rejectReason}
+                    </div>
+                  )}
+
+                  {order.paymentProof && (
+                    <div className="mt-3">
+                      <Button
+                        onClick={() => handleViewProof(order.paymentProof)}
+                        size="sm"
+                        className="w-full bg-blue-600 text-white hover:bg-blue-700"
+                      >
+                        View Proof
+                      </Button>
+                    </div>
+                  )}
+
+                  {order.status === 'pending' && (
+                    <div className="mt-3 flex gap-2">
+                      <Button onClick={() => handleApproveOrder(order.id)} size="sm" className="flex-1 bg-emerald-600 hover:bg-emerald-700">
+                        <Check className="mr-1 h-4 w-4" />
+                        Approve
+                      </Button>
+                      <Button onClick={() => handleRejectOrder(order.id)} size="sm" className="flex-1 bg-red-600 hover:bg-red-700">
+                        <X className="mr-1 h-4 w-4" />
+                        Reject
+                      </Button>
+                    </div>
+                  )}
+
                   {order.username && (
-                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                    <div className="mt-4 border-t border-slate-200 pt-4 dark:border-slate-700">
                       {editingOrder === order.id && editingCredentials ? (
                         <div className="space-y-3">
                           <div>
-                            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">Username</label>
+                            <label className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-400">Username</label>
                             <input
                               type="text"
                               placeholder="Enter username"
                               value={editingCredentials.username}
                               onChange={(e) => setEditingCredentials({ ...editingCredentials, username: e.target.value })}
-                              className="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm"
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">Password</label>
+                            <label className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-400">Password</label>
                             <input
                               type="text"
                               placeholder="Enter password"
                               value={editingCredentials.password}
                               onChange={(e) => setEditingCredentials({ ...editingCredentials, password: e.target.value })}
-                              className="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm"
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">URL</label>
+                            <label className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-400">URL</label>
                             <input
                               type="text"
                               placeholder="https://example.com"
                               value={editingCredentials.url}
                               onChange={(e) => setEditingCredentials({ ...editingCredentials, url: e.target.value })}
-                              className="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm"
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">Expiry Date</label>
+                            <label className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-400">Expiry Date</label>
                             <input
                               type="date"
                               placeholder="Select expiry date"
                               value={editingCredentials.expiryDate}
                               onChange={(e) => setEditingCredentials({ ...editingCredentials, expiryDate: e.target.value })}
-                              className="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm"
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             />
                           </div>
                           <div className="flex gap-2 pt-2">
-                            <Button onClick={handleSaveCredentials} disabled={savingOrder} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" size="sm">
-                              <Check className="w-4 h-4 mr-1" />
+                            <Button onClick={handleSaveCredentials} disabled={savingOrder} className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700" size="sm">
+                              <Check className="mr-1 h-4 w-4" />
                               {savingOrder ? 'Saving...' : 'Save'}
                             </Button>
-                            <Button onClick={() => { setEditingOrder(null); setEditingCredentials(null); }} className="flex-1 bg-slate-600 hover:bg-slate-700 text-white" size="sm">
-                              <X className="w-4 h-4 mr-1" />
+                            <Button onClick={() => { setEditingOrder(null); setEditingCredentials(null); }} className="flex-1 bg-slate-600 text-white hover:bg-slate-700" size="sm">
+                              <X className="mr-1 h-4 w-4" />
                               Cancel
                             </Button>
                           </div>
                         </div>
                       ) : (
                         <div className="space-y-2">
-                          <p className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Credentials</p>
+                          <p className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300">Credentials</p>
                           <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="bg-slate-100 dark:bg-slate-800 rounded p-2">
-                              <p className="text-slate-600 dark:text-slate-400 font-semibold">Username</p>
-                              <p className="font-mono text-slate-900 dark:text-white mt-1 truncate">{order.username}</p>
+                            <div className="rounded bg-slate-100 p-2 dark:bg-slate-800">
+                              <p className="font-semibold text-slate-600 dark:text-slate-400">Username</p>
+                              <p className="mt-1 truncate font-mono text-slate-900 dark:text-white">{order.username}</p>
                             </div>
-                            <div className="bg-slate-100 dark:bg-slate-800 rounded p-2">
-                              <p className="text-slate-600 dark:text-slate-400 font-semibold">Password</p>
-                              <p className="font-mono text-slate-900 dark:text-white mt-1 truncate">{order.password}</p>
+                            <div className="rounded bg-slate-100 p-2 dark:bg-slate-800">
+                              <p className="font-semibold text-slate-600 dark:text-slate-400">Password</p>
+                              <p className="mt-1 truncate font-mono text-slate-900 dark:text-white">{order.password}</p>
                             </div>
-                            <div className="bg-slate-100 dark:bg-slate-800 rounded p-2 col-span-2">
-                              <p className="text-slate-600 dark:text-slate-400 font-semibold">URL</p>
-                              <p className="font-mono text-slate-900 dark:text-white mt-1 break-all text-xs">{order.url}</p>
+                            <div className="col-span-2 rounded bg-slate-100 p-2 dark:bg-slate-800">
+                              <p className="font-semibold text-slate-600 dark:text-slate-400">URL</p>
+                              <p className="mt-1 break-all font-mono text-xs text-slate-900 dark:text-white">{order.url}</p>
                             </div>
-                            <div className="bg-slate-100 dark:bg-slate-800 rounded p-2 col-span-2">
-                              <p className="text-slate-600 dark:text-slate-400 font-semibold">Expires</p>
-                              <p className="font-bold text-slate-900 dark:text-white mt-1">{order.expiryDate}</p>
+                            <div className="col-span-2 rounded bg-slate-100 p-2 dark:bg-slate-800">
+                              <p className="font-semibold text-slate-600 dark:text-slate-400">Expires</p>
+                              <p className="mt-1 font-bold text-slate-900 dark:text-white">{order.expiryDate}</p>
                             </div>
                           </div>
-                          <Button onClick={() => handleEditCredentials(order.id)} className="w-full mt-2 bg-blue-600 hover:bg-blue-700 text-white" size="sm">
-                            <Edit className="w-4 h-4 mr-1" />
+                          <Button onClick={() => handleEditCredentials(order.id)} className="mt-2 w-full bg-blue-600 text-white hover:bg-blue-700" size="sm">
+                            <Edit className="mr-1 h-4 w-4" />
                             Edit
                           </Button>
-                          <Button onClick={() => handleRejectOrder(order.id)} className="w-full mt-2 bg-red-600 hover:bg-red-700 text-white" size="sm">
-                            <X className="w-4 h-4 mr-1" />
+                          <Button onClick={() => handleRejectOrder(order.id)} className="mt-2 w-full bg-red-600 text-white hover:bg-red-700" size="sm">
+                            <X className="mr-1 h-4 w-4" />
                             Reject
                           </Button>
                         </div>
@@ -1085,6 +1266,14 @@ export default function AdminDashboard() {
                 </CardContent>
               </Card>
             ))}
+
+            {filteredOrders.length === 0 && (
+              <Card className="glass">
+                <CardContent className="pb-8 pt-8 text-center">
+                  <p className="text-slate-600 dark:text-slate-400">No orders match this filter right now.</p>
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
 

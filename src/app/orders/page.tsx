@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApp } from '@/components/providers/app-provider';
 import { AppLayout } from '@/components/app-layout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Clock, AlertCircle, XCircle, Eye, X, Copy, Smartphone } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, XCircle, Eye, X, Copy, Smartphone, Download } from 'lucide-react';
 import {
-  subscribeToAdminReplies,
   subscribeToUserOrders,
 } from '@/services/dbService';
 import { ADMIN_APP_TASK_TITLE, listenToUserAdminAppTaskSubmissions, type AdminAppTaskSubmission } from '@/lib/admin-app-task';
@@ -53,13 +52,23 @@ interface HistoryItem {
   subtitle: string;
 }
 
-interface AdminReply {
-  id: string;
-  title: string;
-  message: string;
-  status: string;
-  orderId?: string;
+interface ReceiptData {
+  orderId: string;
+  transactionId?: string;
+  customerName: string;
+  customerEmail: string;
+  planName: string;
+  paymentMethod: string;
+  amount: number;
   createdAt: string;
+}
+
+const PENDING_ORDER_ID_KEY = 'primex_pending_order_id';
+const PENDING_ORDER_RECEIPT_KEY = 'primex_pending_order_receipt';
+
+function isCompletedOrderStatus(status: string) {
+  const normalizedStatus = status?.toLowerCase() || '';
+  return normalizedStatus === 'approved' || normalizedStatus === 'active' || normalizedStatus === 'completed';
 }
 
 const getStatusIcon = (status: string) => {
@@ -103,13 +112,105 @@ export default function OrdersPage() {
   const { isLoading, user } = useApp();
   const [orders, setOrders] = useState<Order[]>([]);
   const [taskSubmissions, setTaskSubmissions] = useState<AdminAppTaskSubmission[]>([]);
-  const [adminReplies, setAdminReplies] = useState<AdminReply[]>([]);
   const [showCredentials, setShowCredentials] = useState(false);
   const [selectedCredentials, setSelectedCredentials] = useState<Credentials | null>(null);
   const [showRejectionReason, setShowRejectionReason] = useState(false);
   const [selectedRejectionReason, setSelectedRejectionReason] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [showCompletionReceipt, setShowCompletionReceipt] = useState(false);
+  const [completionReceipt, setCompletionReceipt] = useState<ReceiptData | null>(null);
+  const previousStatusesRef = useRef<Record<string, string>>({});
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showApprovedReceiptRef = useRef<(order: Order) => void>(() => {});
+
+  const buildReceiptData = (order: Order, fallback?: Partial<ReceiptData>): ReceiptData => ({
+    orderId: order.id,
+    transactionId: fallback?.transactionId || '',
+    customerName:
+      fallback?.customerName ||
+      user?.name ||
+      order.guestName ||
+      order.userEmail ||
+      'Customer',
+    customerEmail:
+      fallback?.customerEmail ||
+      user?.email ||
+      order.guestEmail ||
+      order.userEmail ||
+      '',
+    planName: fallback?.planName || order.plan || 'IPTV Plan',
+    paymentMethod: fallback?.paymentMethod || order.paymentMethod || 'Payment submitted',
+    amount: Number(fallback?.amount ?? order.finalPrice ?? 0),
+    createdAt:
+      fallback?.createdAt ||
+      (typeof order.createdAt === 'string'
+        ? order.createdAt
+        : new Date().toISOString()),
+  });
+
+  showApprovedReceiptRef.current = (order: Order) => {
+    let fallback: Partial<ReceiptData> = {};
+
+    if (typeof window !== 'undefined') {
+      const storedReceipt = window.localStorage.getItem(PENDING_ORDER_RECEIPT_KEY);
+      if (storedReceipt) {
+        try {
+          const parsed = JSON.parse(storedReceipt) as ReceiptData;
+          if (parsed?.orderId === order.id) {
+            fallback = parsed;
+          }
+        } catch {}
+      }
+    }
+
+    setCompletionReceipt(buildReceiptData(order, fallback));
+    setShowCompletionReceipt(true);
+  };
+
+  const closeCompletionReceipt = () => {
+    if (typeof window !== 'undefined' && completionReceipt?.orderId) {
+      window.localStorage.removeItem(PENDING_ORDER_ID_KEY);
+      window.localStorage.removeItem(PENDING_ORDER_RECEIPT_KEY);
+      window.localStorage.setItem(
+        `primex_receipt_seen_${completionReceipt.orderId}`,
+        '1'
+      );
+    }
+
+    setShowCompletionReceipt(false);
+    setCompletionReceipt(null);
+  };
+
+  const handleDownloadReceipt = () => {
+    if (!completionReceipt || typeof window === 'undefined') {
+      return;
+    }
+
+    const receiptText = [
+      'PrimeXstream Pro Order Receipt',
+      `Order ID: ${completionReceipt.orderId}`,
+      `Customer Name: ${completionReceipt.customerName}`,
+      `Customer Email: ${completionReceipt.customerEmail}`,
+      `Plan: ${completionReceipt.planName}`,
+      `Payment Method: ${completionReceipt.paymentMethod}`,
+      `Transaction ID: ${completionReceipt.transactionId || 'Pending verification'}`,
+      `Created: ${new Date(completionReceipt.createdAt).toLocaleString()}`,
+      `Amount: $${completionReceipt.amount.toFixed(2)}`,
+    ].join('\n');
+
+    const blob = new Blob([receiptText], {
+      type: 'text/plain;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `receipt-${completionReceipt.orderId}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
     if (!user?.id) {
@@ -120,10 +221,6 @@ export default function OrdersPage() {
     const unsubscribeOrders = subscribeToUserOrders(user.id, (ordersData: Order[]) => {
       setOrders(ordersData);
       setLoading(false);
-    });
-
-    const unsubscribeReplies = subscribeToAdminReplies(user.id, (replyRows: AdminReply[]) => {
-      setAdminReplies(replyRows as AdminReply[]);
     });
 
     const unsubscribeTasks = listenToUserAdminAppTaskSubmissions(user.id, (rows) => {
@@ -138,10 +235,78 @@ export default function OrdersPage() {
 
     return () => {
       unsubscribeOrders && unsubscribeOrders();
-      unsubscribeReplies && unsubscribeReplies();
       unsubscribeTasks && unsubscribeTasks();
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !loading) {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    loadingTimeoutRef.current = setTimeout(() => {
+      setLoading(false);
+    }, 8000);
+
+    return () => {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
+    };
+  }, [loading, user?.id]);
+
+  useEffect(() => {
+    if (!orders.length) {
+      previousStatusesRef.current = {};
+      return;
+    }
+
+    const previousStatuses = previousStatusesRef.current;
+    const nextStatuses: Record<string, string> = {};
+
+    let orderToCelebrate: Order | null = null;
+
+    for (const order of orders) {
+      nextStatuses[order.id] = order.status;
+      const previousStatus = previousStatuses[order.id];
+
+      if (
+        previousStatus === 'pending' &&
+        isCompletedOrderStatus(order.status)
+      ) {
+        orderToCelebrate = order;
+        break;
+      }
+    }
+
+    if (!orderToCelebrate && typeof window !== 'undefined') {
+      const pendingOrderId = window.localStorage.getItem(PENDING_ORDER_ID_KEY);
+      const storedSeenFlag = pendingOrderId
+        ? window.localStorage.getItem(`primex_receipt_seen_${pendingOrderId}`)
+        : null;
+
+      if (pendingOrderId && !storedSeenFlag) {
+        const matchedOrder = orders.find((order) => order.id === pendingOrderId);
+        if (matchedOrder && isCompletedOrderStatus(matchedOrder.status)) {
+          orderToCelebrate = matchedOrder;
+        } else if (matchedOrder?.status === 'rejected') {
+          window.localStorage.removeItem(PENDING_ORDER_ID_KEY);
+          window.localStorage.removeItem(PENDING_ORDER_RECEIPT_KEY);
+        }
+      }
+    }
+
+    previousStatusesRef.current = nextStatuses;
+
+    if (orderToCelebrate && !showCompletionReceipt) {
+      showApprovedReceiptRef.current(orderToCelebrate);
+    }
+  }, [orders, showCompletionReceipt]);
 
   const historyItems: HistoryItem[] = [
     ...orders.map((order) => ({
@@ -176,6 +341,14 @@ export default function OrdersPage() {
     return secondDate - firstDate;
   });
 
+  const completedCount = historyItems.filter((item) =>
+    isCompletedOrderStatus(item.status)
+  ).length;
+  const pendingCount = historyItems.filter(
+    (item) => item.status?.toLowerCase() === 'pending'
+  ).length;
+  const totalCount = historyItems.length;
+
   const handleViewCredentials = (item: HistoryItem) => {
     if (item.username && item.password) {
       setSelectedCredentials({
@@ -205,6 +378,96 @@ export default function OrdersPage() {
 
   return (
     <AppLayout title="Orders">
+      {showCompletionReceipt && completionReceipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 backdrop-blur-sm">
+          <Card className="w-full max-w-md overflow-hidden border border-emerald-200 bg-white shadow-[0_30px_90px_-40px_rgba(16,185,129,0.55)] dark:border-emerald-800/60 dark:bg-slate-950">
+            <CardContent className="p-6 sm:p-7">
+              <div className="relative mb-6 flex justify-center">
+                <div className="absolute h-24 w-24 animate-ping rounded-full bg-emerald-200/60 dark:bg-emerald-500/10" />
+                <div className="relative flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg">
+                  <CheckCircle className="h-12 w-12" />
+                </div>
+              </div>
+
+              <div className="space-y-2 text-center">
+                <p className="text-2xl font-bold text-slate-900 dark:text-white">
+                  Order Completed
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Your payment has been approved and your order is now ready.
+                </p>
+              </div>
+
+              <div className="mt-6 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/90 p-4 dark:border-slate-800 dark:bg-slate-900/70">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Order ID</span>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-white">{completionReceipt.orderId.slice(0, 8)}...</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Plan</span>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-white">{completionReceipt.planName}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Payment</span>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-white">{completionReceipt.paymentMethod}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Amount</span>
+                  <span className="text-base font-bold text-emerald-600 dark:text-emerald-400">${completionReceipt.amount.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Date</span>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                    {new Date(completionReceipt.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={handleDownloadReceipt}
+                >
+                  <Download className="h-4 w-4" />
+                  Download
+                </Button>
+                <Button
+                  type="button"
+                  className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+                  onClick={() => {
+                    const completedOrder = orders.find(
+                      (order) => order.id === completionReceipt.orderId
+                    );
+                    if (completedOrder?.username && completedOrder?.password) {
+                      handleViewCredentials({
+                        ...completedOrder,
+                        itemType: 'order',
+                        subtitle: `IPTV service • ID: ${completedOrder.id.slice(0, 8)}...`,
+                      });
+                    }
+                    closeCompletionReceipt();
+                  }}
+                >
+                  <Eye className="h-4 w-4" />
+                  View Access
+                </Button>
+              </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="mt-3 w-full"
+                onClick={closeCompletionReceipt}
+              >
+                Close
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Credentials Modal */}
       {showCredentials && selectedCredentials && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center px-4 z-50">
@@ -346,12 +609,9 @@ export default function OrdersPage() {
             <div className="grid grid-cols-3 gap-3">
               <Card className="glass">
                 <CardContent className="pt-4 text-center">
-              <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Active</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Completed</p>
               <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                {historyItems.filter(
-                  (o) =>
-                    o.status === 'active' || o.status === 'approved'
-                ).length}
+                {completedCount}
               </p>
             </CardContent>
           </Card>
@@ -361,7 +621,7 @@ export default function OrdersPage() {
                 Pending
               </p>
               <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-                {historyItems.filter((o) => o.status === 'pending').length}
+                {pendingCount}
               </p>
             </CardContent>
           </Card>
@@ -371,11 +631,22 @@ export default function OrdersPage() {
                 Total
               </p>
               <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                {historyItems.length}
+                {totalCount}
               </p>
             </CardContent>
           </Card>
         </div>
+
+        <Card className="glass border border-slate-200 dark:border-slate-700">
+          <CardContent className="pt-4">
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">
+              Notifications are now your update center
+            </p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              Order approvals, rejections, referral activity, and task review updates now appear in the notification bell.
+            </p>
+          </CardContent>
+        </Card>
 
         {/* Orders List */}
         <div className="space-y-3">
@@ -522,38 +793,6 @@ export default function OrdersPage() {
               })
           )}
             </div>
-            {adminReplies.length > 0 && (
-              <div className="space-y-3 pt-2">
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                  Admin Replies
-                </h2>
-                {adminReplies.map((reply) => (
-                  <Card
-                    key={reply.id}
-                    className="glass border border-blue-200 dark:border-blue-800/40"
-                  >
-                    <CardContent className="pt-4 space-y-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-semibold text-slate-900 dark:text-white">
-                          {reply.title}
-                        </p>
-                        <span className="text-xs text-slate-500 dark:text-slate-400">
-                          {new Date(reply.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <p className="text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
-                        {reply.message}
-                      </p>
-                      {reply.orderId && (
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          Linked order: {reply.orderId.slice(0, 8)}...
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>

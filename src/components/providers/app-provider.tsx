@@ -7,6 +7,8 @@ import {
   updateUserProfile,
 } from '@/services/dbService';
 import { signOutUser, subscribeToAuthChanges } from '@/services/authService';
+import { applyReferralCode as applySupabaseReferralCode } from '@/lib/supabase-referral-service';
+import { ensureUser as ensureSupabaseUser } from '@/lib/supabase-user-service';
 
 export interface User {
   id: string;
@@ -165,6 +167,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           email,
         });
 
+        await ensureSupabaseUser(id, {
+          name: profile?.name || name,
+          email: profile?.email || email,
+          referralCode: profile?.referralCode,
+          referredBy: profile?.referredBy,
+          totalReferrals: profile?.totalReferrals,
+          credits: profile?.credits,
+        });
+
         if (!active) {
           return;
         }
@@ -180,6 +191,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
 
         setUser(resolvedUser);
+
+        if (
+          pendingSignupProfile?.appliedReferralCode &&
+          !profile?.referredBy
+        ) {
+          try {
+            await applySupabaseReferralCode(
+              id,
+              pendingSignupProfile.appliedReferralCode
+            );
+          } catch (error) {
+            console.warn(
+              'Auto-apply referral failed:',
+              formatError(error)
+            );
+          }
+        }
+
         clearPendingSignupProfile(email);
 
         stopUserSubscription = subscribeToUserData(id, (updatedUser) => {

@@ -827,6 +827,12 @@ export async function applyReferralCode(userId: string, referralCode: string): P
       referralFromUserName: currentUserName
     });
 
+    await sendNotification(userId, {
+      title: 'Referral Code Applied',
+      message: `Your account is now linked to referral code ${referralCode.toUpperCase()}. Future referral rewards and updates will appear here.`,
+      type: 'referral'
+    });
+
     return { success: true, newReferralCount: (referrerData?.total_referrals || 0) + 1 };
   } catch (error) {
     console.error('Error applying referral code:', error);

@@ -476,7 +476,9 @@ export function listenToDashboardStats(
         .select('id, purchased_plan, reward_claimed, reward_amount'),
       supabase.from('plans').select('id, is_active'),
     ]);
-    const approved = allOrders.filter((o: any) => o.status === 'approved');
+    const approved = allOrders.filter((o: any) =>
+      ['approved', 'completed', 'active'].includes(o.status)
+    );
     const totalSales = approved.reduce(
       (sum: number, o: any) => sum + Number(o.amount || o.finalPrice || 0),
       0

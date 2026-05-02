@@ -1,5 +1,7 @@
 import { supabase } from '@/lib/supabase-config';
 
+import { createNotification } from '@/lib/supabase-notifications';
+
 export const ADMIN_APP_TASK_TYPE = 'admin_app_install';
 export const ADMIN_APP_TASK_TITLE = 'Install Admin App & Send Account Details';
 export const ADMIN_APP_MAX_TRIES = 5;
@@ -303,6 +305,15 @@ export async function approveAdminAppTask(
   if (error) {
     throw error;
   }
+
+  await createNotification(
+    submission.userId,
+    'success',
+    'Task Approved',
+    `Your admin app task has been approved.${params.adminNotes ? `\n\nAdmin note: ${params.adminNotes}` : '\n\nOpen your task history to view the access details.'}`,
+    {},
+    '/orders'
+  );
 }
 
 export async function rejectAdminAppTask(
@@ -329,4 +340,13 @@ export async function rejectAdminAppTask(
   if (error) {
     throw error;
   }
+
+  await createNotification(
+    submission.userId,
+    'reject',
+    'Task Rejected',
+    `Your admin app task was rejected.\n\nReason: ${params.reason}`,
+    {},
+    '/orders'
+  );
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useApp } from '@/components/providers/app-provider';
+import { supabase } from '@/lib/supabase-config';
 import { database, isFirebaseConfigured } from '@/services/firebaseClient';
 import { get, ref } from 'firebase/database';
 import { AppLayout } from '@/components/app-layout';
@@ -36,7 +37,7 @@ import {
   Users2,
 } from 'lucide-react';
 import { useRealtimeReferrals } from '@/lib/useRealtimeReferrals';
-import { claimReferralReward, applyReferralCode } from '@/lib/firebase-referral-service';
+import { claimReferralReward, applyReferralCode } from '@/lib/supabase-referral-service';
 import { getSocialMediaLinks } from '@/lib/supabase-service';
 import { ReferralTreeModal } from '@/components/referral-tree-modal';
 import { EarnBreakdownModal } from '@/components/earn-breakdown-modal';

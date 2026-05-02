@@ -275,67 +275,47 @@ export async function createOrder(uid, orderData) {
     return normalizedOrder;
   }
 
-  try {
-    const profile = await ensureUserProfile(uid, {
-      name: orderData.user || orderData.userName || orderData.guestName || 'User',
-      email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
-    });
+  const profile = await ensureUserProfile(uid, {
+    name: orderData.user || orderData.userName || orderData.guestName || 'User',
+    email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
+  });
 
-    const ordersRef = getDatabaseRef(`users/${uid}/orders`);
-    const orderRef = push(ordersRef);
-    const timestamp = new Date().toISOString();
+  const ordersRef = getDatabaseRef(`users/${uid}/orders`);
+  const orderRef = push(ordersRef);
+  const timestamp = new Date().toISOString();
 
-    const normalizedOrder = {
-      ...orderData,
-      id: orderRef.key,
-      status: orderData.status || 'pending',
-      paymentProof:
-        orderData.paymentProof ||
-        orderData.paymentProofUrl ||
-        orderData.payment_proof_url ||
-        '',
-      paymentProofPath:
-        orderData.paymentProofPath || orderData.payment_proof_path || '',
-      createdAt: orderData.createdAt || timestamp,
-      updatedAt: timestamp,
-    };
+  const normalizedOrder = {
+    ...orderData,
+    id: orderRef.key,
+    status: orderData.status || 'pending',
+    paymentProof:
+      orderData.paymentProof ||
+      orderData.paymentProofUrl ||
+      orderData.payment_proof_url ||
+      '',
+    paymentProofPath:
+      orderData.paymentProofPath || orderData.payment_proof_path || '',
+    createdAt: orderData.createdAt || timestamp,
+    updatedAt: timestamp,
+  };
 
-    await set(orderRef, normalizedOrder);
-    const createdOrder = normalizeOrder(uid, orderRef.key, normalizedOrder, {
-      email:
-        orderData.userEmail ||
-        orderData.email ||
-        orderData.guestEmail ||
-        profile.email ||
-        '',
-    });
+  await set(orderRef, normalizedOrder);
+  const createdOrder = normalizeOrder(uid, orderRef.key, normalizedOrder, {
+    email:
+      orderData.userEmail ||
+      orderData.email ||
+      orderData.guestEmail ||
+      profile.email ||
+      '',
+  });
 
-    queueOrderCreatedNotification(
-      uid,
-      createdOrder,
-      orderData.userName || orderData.user || orderData.guestName || profile.name || 'User'
-    );
+  queueOrderCreatedNotification(
+    uid,
+    createdOrder,
+    orderData.userName || orderData.user || orderData.guestName || profile.name || 'User'
+  );
 
-    return createdOrder;
-  } catch (firebaseError) {
-    console.warn(
-      'Firebase order creation failed, falling back to Supabase orders:',
-      formatErrorMessage(firebaseError, 'Unknown Firebase order error')
-    );
-
-    const order = await legacyCreateOrder(uid, orderData);
-    const normalizedOrder = normalizeOrder(uid, order.id, order, {
-      email: orderData.userEmail || orderData.email || orderData.guestEmail || '',
-    });
-
-    queueOrderCreatedNotification(
-      uid,
-      normalizedOrder,
-      orderData.userName || orderData.user || orderData.guestName || 'User'
-    );
-
-    return normalizedOrder;
-  }
+  return createdOrder;
 }
 
 export async function updateOrder(uid, orderId, updates = {}) {
